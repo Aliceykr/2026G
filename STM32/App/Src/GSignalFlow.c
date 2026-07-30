@@ -133,7 +133,7 @@ void GSignalFlow_Process(void)
 
         if (Fpga_ReadCaptureStatus(&status) == 0U)
         {
-            GSignalFlow_AbortCycle("status", "FPGA ERR");
+            GSignalFlow_AbortCycle("status", "STAT ERR");
             return;
         }
 
@@ -151,14 +151,14 @@ void GSignalFlow_Process(void)
 
         if ((uint16_t)(status >> 16U) != FPGA_CAPTURE_FRAME_LENGTH)
         {
-            GSignalFlow_AbortCycle("length", "FPGA ERR");
+            GSignalFlow_AbortCycle("length", "LEN ERR");
             return;
         }
     }
 
     if (Fpga_ReadCaptureFrame(s_CaptureFrame, SPECTRUM_FRAME_LENGTH) == 0U)
     {
-        GSignalFlow_AbortCycle("frame", "FPGA ERR");
+        GSignalFlow_AbortCycle("frame", "FRAME ERR");
         return;
     }
 
@@ -211,14 +211,14 @@ static void GSignalFlow_StartOrRetry(uint32_t now)
         s_FpgaOnline = Fpga_ReadId(&s_FpgaId);
         if (s_FpgaOnline == 0U)
         {
-            GSignalFlow_AbortCycle("id", "FPGA ERR");
+            GSignalFlow_AbortCycle("id", "ID ERR");
             return;
         }
     }
 
     if (Fpga_StartCapture(0U) == 0U)
     {
-        GSignalFlow_AbortCycle("start", "FPGA ERR");
+        GSignalFlow_AbortCycle("start", "START ERR");
         return;
     }
 

@@ -34,6 +34,17 @@ static void FpgaLink_Select(void);
  */
 static void FpgaLink_Deselect(void);
 
+/* 微秒级软件片选时序和SPI异常恢复。 */
+static void FpgaLink_DelayUs(uint32_t delay_us);
+static void FpgaLink_RecoverBus(void);
+static uint8_t FpgaLink_ReadCaptureFrameOnce(int16_t *samples,
+                                            uint16_t sample_count);
+
+#define FPGA_RESPONSE_ANALYSIS_STARTED  0x414E4C59UL
+#define FPGA_RESPONSE_WAVEFORM_STARTED  0x57415645UL
+
+static uint8_t s_CycleCounterReady;
+
 /*
  * 函数功能：初始化 FPGA 通信模块。
  * 作用说明：
@@ -52,6 +63,14 @@ void FpgaLink_Init(void)
     GPIO_InitStruct.Pull = GPIO_NOPULL;
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
     HAL_GPIO_Init(FPGA_CS_GPIO_Port, &GPIO_InitStruct);
+
+    /* 使用Cortex-M4周期计数器产生不依赖SysTick的微秒级片选间隔。 */
+    CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+    DWT->CYCCNT = 0UL;
+    DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
+    s_CycleCounterReady =
+        ((DWT->CTRL & DWT_CTRL_CYCCNTENA_Msk) != 0UL) ? 1U : 0U;
+    FpgaLink_DelayUs(FPGA_LINK_CS_HIGH_US);
 }
 
 /*
@@ -88,8 +107,14 @@ uint8_t FpgaLink_Transfer32(uint32_t tx_word, uint32_t *rx_word, uint32_t timeou
     /* 低 16 bit 后发。 */
     tx_buf[1] = (uint16_t)(tx_word & 0xFFFFU);
 
-    /* 片选拉低后开始一次完整 32 bit 事务。 */
+    /*
+     * FPGA在50MHz域同步CS。每帧前明确保持CS高电平，再提供CS建立时间，
+     * 防止相邻HAL事务间的高脉冲过窄而被FPGA同步器漏采。
+     */
+    FpgaLink_Deselect();
+    FpgaLink_DelayUs(FPGA_LINK_CS_HIGH_US);
     FpgaLink_Select();
+    FpgaLink_DelayUs(FPGA_LINK_CS_SETUP_US);
 
     /*
      * HAL_SPI_TransmitReceive 的 Size 参数在 16 bit 模式下表示半字数量。
@@ -101,11 +126,13 @@ uint8_t FpgaLink_Transfer32(uint32_t tx_word, uint32_t *rx_word, uint32_t timeou
                                       2U,
                                       timeout_ms);
 
-    /* 失败路径也必须先恢复 CS 高电平，再返回给上层。 */
+    /* 最后一位SCLK后保持CS低电平，使FPGA有时间提交rx_valid。 */
+    FpgaLink_DelayUs(FPGA_LINK_CS_HOLD_US);
     FpgaLink_Deselect();
 
     if (status != HAL_OK)
     {
+        FpgaLink_RecoverBus();
         /* 若调用者关心返回值，失败时显式写 0，避免上层读到旧数据。 */
         if (rx_word != NULL)
         {
@@ -149,26 +176,34 @@ uint8_t Fpga_ReadId(uint32_t *id)
         *id = 0UL;
     }
 
-    /* 第一帧：发送读 ID 命令，本帧返回值不使用。 */
-    if (FpgaLink_Transfer32(FPGA_CMD_READ_ID, NULL, FPGA_LINK_DEFAULT_TIMEOUT_MS) == 0U)
     {
-        return 0U;
+        uint8_t attempt;
+
+        for (attempt = 0U; attempt < FPGA_LINK_RETRY_COUNT; attempt++)
+        {
+            if ((FpgaLink_Transfer32(FPGA_CMD_READ_ID,
+                                     NULL,
+                                     FPGA_LINK_DEFAULT_TIMEOUT_MS) != 0U) &&
+                (FpgaLink_Transfer32(FPGA_CMD_NOP,
+                                     &rx_word,
+                                     FPGA_LINK_DEFAULT_TIMEOUT_MS) != 0U) &&
+                (rx_word == FPGA_EXPECTED_ID))
+            {
+                if (id != NULL)
+                {
+                    *id = rx_word;
+                }
+                return 1U;
+            }
+            FpgaLink_DelayUs(10U);
+        }
     }
 
-    /* 第二帧：发送 NOP，同时读取 FPGA ID。 */
-    if (FpgaLink_Transfer32(FPGA_CMD_NOP, &rx_word, FPGA_LINK_DEFAULT_TIMEOUT_MS) == 0U)
-    {
-        return 0U;
-    }
-
-    /* 把实际读回值交给上层，便于串口报告或调试观察。 */
     if (id != NULL)
     {
         *id = rx_word;
     }
-
-    /* 只有 ID 与文档约定值完全一致，才认为 FPGA 在线。 */
-    return (rx_word == FPGA_EXPECTED_ID) ? 1U : 0U;
+    return 0U;
 }
 
 uint8_t Fpga_StartCapture(uint8_t waveform_mode)
@@ -176,15 +211,34 @@ uint8_t Fpga_StartCapture(uint8_t waveform_mode)
     uint32_t command = (waveform_mode != 0U)
                      ? FPGA_CMD_START_WAVEFORM
                      : FPGA_CMD_START_ANALYSIS;
+    uint32_t expected_response = (waveform_mode != 0U)
+                               ? FPGA_RESPONSE_WAVEFORM_STARTED
+                               : FPGA_RESPONSE_ANALYSIS_STARTED;
+    uint32_t rx_word = 0UL;
+    uint8_t attempt;
 
-    return FpgaLink_Transfer32(command,
-                               NULL,
-                               FPGA_LINK_DEFAULT_TIMEOUT_MS);
+    for (attempt = 0U; attempt < FPGA_LINK_RETRY_COUNT; attempt++)
+    {
+        if ((FpgaLink_Transfer32(command,
+                                 NULL,
+                                 FPGA_LINK_DEFAULT_TIMEOUT_MS) != 0U) &&
+            (FpgaLink_Transfer32(FPGA_CMD_NOP,
+                                 &rx_word,
+                                 FPGA_LINK_DEFAULT_TIMEOUT_MS) != 0U) &&
+            (rx_word == expected_response))
+        {
+            return 1U;
+        }
+        FpgaLink_DelayUs(10U);
+    }
+
+    return 0U;
 }
 
 uint8_t Fpga_ReadCaptureStatus(uint32_t *status)
 {
     uint32_t rx_word = 0UL;
+    uint8_t attempt;
 
     if (status == NULL)
     {
@@ -193,28 +247,29 @@ uint8_t Fpga_ReadCaptureStatus(uint32_t *status)
 
     *status = 0UL;
 
-    if (FpgaLink_Transfer32(FPGA_CMD_READ_STATUS,
-                            NULL,
-                            FPGA_LINK_DEFAULT_TIMEOUT_MS) == 0U)
+    for (attempt = 0U; attempt < FPGA_LINK_RETRY_COUNT; attempt++)
     {
-        return 0U;
+        if ((FpgaLink_Transfer32(FPGA_CMD_READ_STATUS,
+                                 NULL,
+                                 FPGA_LINK_DEFAULT_TIMEOUT_MS) != 0U) &&
+            (FpgaLink_Transfer32(FPGA_CMD_NOP,
+                                 &rx_word,
+                                 FPGA_LINK_DEFAULT_TIMEOUT_MS) != 0U) &&
+            ((uint16_t)(rx_word >> 16U) == FPGA_CAPTURE_FRAME_LENGTH) &&
+            ((rx_word & 0x0000FFF8UL) == 0UL))
+        {
+            *status = rx_word;
+            return 1U;
+        }
+        FpgaLink_DelayUs(10U);
     }
 
-    if (FpgaLink_Transfer32(FPGA_CMD_NOP,
-                            &rx_word,
-                            FPGA_LINK_DEFAULT_TIMEOUT_MS) == 0U)
-    {
-        return 0U;
-    }
-
-    *status = rx_word;
-    return 1U;
+    return 0U;
 }
 
 uint8_t Fpga_ReadCaptureFrame(int16_t *samples, uint16_t sample_count)
 {
-    uint32_t rx_word = 0UL;
-    uint16_t index;
+    uint8_t attempt;
 
     if ((samples == NULL) ||
         (sample_count == 0U) ||
@@ -222,6 +277,25 @@ uint8_t Fpga_ReadCaptureFrame(int16_t *samples, uint16_t sample_count)
     {
         return 0U;
     }
+
+    for (attempt = 0U; attempt < FPGA_LINK_RETRY_COUNT; attempt++)
+    {
+        if (FpgaLink_ReadCaptureFrameOnce(samples, sample_count) != 0U)
+        {
+            return 1U;
+        }
+        FpgaLink_RecoverBus();
+        FpgaLink_DelayUs(10U);
+    }
+
+    return 0U;
+}
+
+static uint8_t FpgaLink_ReadCaptureFrameOnce(int16_t *samples,
+                                            uint16_t sample_count)
+{
+    uint32_t rx_word = 0UL;
+    uint16_t index;
 
     /*
      * RAM 读取响应采用一帧流水：
@@ -268,6 +342,44 @@ uint8_t Fpga_ReadCaptureFrame(int16_t *samples, uint16_t sample_count)
 
     samples[sample_count - 1U] = (int16_t)(rx_word & 0xFFFFUL);
     return 1U;
+}
+
+static void FpgaLink_DelayUs(uint32_t delay_us)
+{
+    if ((delay_us == 0UL) || (s_CycleCounterReady == 0U))
+    {
+        volatile uint32_t fallback = delay_us * 32UL;
+
+        while (fallback-- != 0UL)
+        {
+            __NOP();
+        }
+        return;
+    }
+
+    {
+        uint32_t cycles_per_us = SystemCoreClock / 1000000UL;
+        uint32_t start = DWT->CYCCNT;
+        uint32_t required = cycles_per_us * delay_us;
+
+        while ((uint32_t)(DWT->CYCCNT - start) < required)
+        {
+            __NOP();
+        }
+    }
+}
+
+static void FpgaLink_RecoverBus(void)
+{
+    FpgaLink_Deselect();
+    FpgaLink_DelayUs(10U);
+
+    (void)HAL_SPI_Abort(&hspi1);
+    __HAL_SPI_DISABLE(&hspi1);
+    __HAL_SPI_CLEAR_OVRFLAG(&hspi1);
+    __HAL_SPI_ENABLE(&hspi1);
+
+    FpgaLink_DelayUs(FPGA_LINK_CS_HIGH_US);
 }
 
 /*
