@@ -132,12 +132,13 @@ int main(void)
 
     LoadInput(spectrum_geometry_responses,
               sizeof(spectrum_geometry_responses));
-    if (TjcHmi_DrawSpectrumXAxis() == 0U)
+    if ((TjcHmi_DrawSpectrumPeakLabel(0U, 1U, 0U) != 0U) ||
+        (TjcHmi_DrawSpectrumPeakLabel(10000000U, 1U, 0U) == 0U))
     {
-        puts("FAIL TJC HMI spectrum x-axis geometry");
+        puts("FAIL TJC HMI spectrum peak label/DC rejection");
         return 1;
     }
 
-    puts("PASS TJC HMI: buttons, deferred get event, width and spectrum axis");
+    puts("PASS TJC HMI: buttons, deferred get and Hn/Hz peak labels");
     return 0;
 }

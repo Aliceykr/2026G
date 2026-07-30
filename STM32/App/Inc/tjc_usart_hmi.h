@@ -55,18 +55,17 @@ void UART4_IRQHandler(void);
  */
 uint8_t TjcHmi_ReadEvent(TjcHmiEvent *event, uint8_t *cycles);
 
-/* t9状态显示：busy=1显示BUSY，busy=0显示READY。 */
+/* g9状态显示：busy=1显示BUSY，busy=0显示READY。 */
 void TjcHmi_SetComputeBusy(uint8_t busy);
 void TjcHmi_SetStatusText(const char *text);
 
 /* 读取控件宽度属性，例如name="s0"；成功返回1。 */
 uint8_t TjcHmi_GetComponentWidth(const char *name, uint16_t *width);
 
-/*
- * 在s1固定基线处绘制10kHz~500kHz横轴、刻度和Hz标注。
- * 控件坐标会从屏幕实时读取并缓存，失败返回0。
- */
-uint8_t TjcHmi_DrawSpectrumXAxis(void);
+/* 在10~500kHz频谱峰下方绘制“Hn 频率”标签。 */
+uint8_t TjcHmi_DrawSpectrumPeakLabel(uint32_t frequency_hundredths_hz,
+                                    uint8_t harmonic,
+                                    uint8_t row);
 
 /*
  * 淘晶驰ASCII指令发送辅助函数：tjc_send_string/txt/val/nstring会自动
