@@ -23,6 +23,7 @@
 #define G_FLOW_WAVE_FALLBACK_POINTS   512U
 #define G_FLOW_WAVE_MAX_POINTS        1024U
 #define G_FLOW_SPECTRUM_HEIGHT_DIVISOR 3U
+#define G_FLOW_SPECTRUM_VERTICAL_OFFSET 42U
 #define G_FLOW_SPECTRUM_FALLBACK_POINTS 512U
 #define G_FLOW_SPECTRUM_MAX_POINTS    1024U
 #define G_FLOW_BUTTON_DEBOUNCE_MS     120U
@@ -883,30 +884,36 @@ static uint8_t GSignalFlow_UpdateHmiSpectrum(uint8_t signal_valid)
         (SpectrumAnalyzer_BuildDisplay(s_SpectrumDisplay,
                                        display_points) == 0U))
     {
-        memset(s_SpectrumDisplay, 0, display_points);
+        memset(s_SpectrumDisplay,
+               G_FLOW_SPECTRUM_VERTICAL_OFFSET,
+               display_points);
     }
     else
     {
         /*
          * BuildDisplay按10kHz->500kHz的FFT bin递增顺序输出。
-         * 仅压缩纵坐标上限，0下限保持不变。
+         * 峰值高度压缩为原来的1/3，基线为上一版半高值的1/3。
          */
         for (point = 0U; point < display_points; point++)
         {
             s_SpectrumDisplay[point] = (uint8_t)(
                 s_SpectrumDisplay[point] /
-                G_FLOW_SPECTRUM_HEIGHT_DIVISOR);
+                G_FLOW_SPECTRUM_HEIGHT_DIVISOR +
+                G_FLOW_SPECTRUM_VERTICAL_OFFSET);
         }
     }
 
+    /* 暂停屏幕刷新，数据和坐标轴完整更新后一次性显示。 */
+    tjc_send_string("ref_stop");
     tjc_clear_wave("s1.id", 0);
     tjc_send_wave("s1.id",
                   0,
                   s_SpectrumDisplay,
                   display_points);
 
-    /* 频谱为空时全零谱线本身也保留底部横轴。 */
+    /* 频谱为空时仍发送固定基线，横轴不会消失。 */
     axis_ready = TjcHmi_DrawSpectrumXAxis();
+    tjc_send_string("ref_star");
     if ((width_ready != 0U) && (axis_ready != 0U))
     {
         s_SpectrumScreenInitialized = 1U;

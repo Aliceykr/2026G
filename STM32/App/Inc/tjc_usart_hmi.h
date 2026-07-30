@@ -63,7 +63,7 @@ void TjcHmi_SetStatusText(const char *text);
 uint8_t TjcHmi_GetComponentWidth(const char *name, uint16_t *width);
 
 /*
- * 在s1底部绘制10kHz~500kHz横轴、刻度和Hz标注。
+ * 在s1固定基线处绘制10kHz~500kHz横轴、刻度和Hz标注。
  * 控件坐标会从屏幕实时读取并缓存，失败返回0。
  */
 uint8_t TjcHmi_DrawSpectrumXAxis(void);

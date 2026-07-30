@@ -61,6 +61,8 @@
 #define TJC_NUMERIC_RESPONSE_TIMEOUT_MS 50U
 #define TJC_SPECTRUM_AXIS_COLOR         65535UL
 #define TJC_SPECTRUM_LABEL_HEIGHT       14UL
+#define TJC_SPECTRUM_BASELINE_VALUE     42UL
+#define TJC_WAVEFORM_MAX_VALUE          254UL
 
 /*
  * 串口屏工程使用GB2312编码，不能直接依赖C源文件的UTF-8中文编码。
@@ -604,7 +606,11 @@ uint8_t TjcHmi_DrawSpectrumXAxis(void)
     }
 
     axis_y = (uint32_t)s_SpectrumY +
-             (uint32_t)s_SpectrumHeight - 1UL;
+             (uint32_t)s_SpectrumHeight - 1UL -
+             (TJC_SPECTRUM_BASELINE_VALUE *
+              (uint32_t)(s_SpectrumHeight - 1U) +
+              TJC_WAVEFORM_MAX_VALUE / 2UL) /
+             TJC_WAVEFORM_MAX_VALUE;
     (void)snprintf(str1,
                    sizeof(str1),
                    "line %u,%lu,%u,%lu,%lu",
