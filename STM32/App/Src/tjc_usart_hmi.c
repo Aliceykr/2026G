@@ -58,6 +58,9 @@
 #define TJC_START_LABEL_RETRY_MS        2000U
 #define TJC_ADDT_READY_DELAY_MS         10U
 #define TJC_COMMAND_GAP_MS              2U
+#define TJC_NUMERIC_RESPONSE_TIMEOUT_MS 50U
+#define TJC_SPECTRUM_AXIS_COLOR         65535UL
+#define TJC_SPECTRUM_LABEL_HEIGHT       14UL
 
 /*
  * 串口屏工程使用GB2312编码，不能直接依赖C源文件的UTF-8中文编码。
@@ -84,6 +87,14 @@ static uint8_t s_RxFrame[TJC_RX_FRAME_LENGTH]; /**< 7字节按键帧缓存。 */
 static uint8_t s_RxFrameLength;      /**< 当前已收集的帧字节数。 */
 static uint32_t s_NextStartLabelTick; /**< 下一次刷新静态文字的时刻。 */
 static volatile uint32_t s_RxErrorCount; /**< ORE/NE/FE/PE错误计数。 */
+static TjcHmiEvent s_PendingEvent; /**< get查询期间收到的按键事件。 */
+static uint8_t s_PendingCycles;    /**< 延迟事件携带的周期参数。 */
+static uint8_t s_SpectrumGeometryReady; /**< s1坐标已成功缓存。 */
+static uint16_t s_SpectrumX;
+static uint16_t s_SpectrumY;
+static uint16_t s_SpectrumWidth;
+static uint16_t s_SpectrumHeight;
+static uint16_t s_SpectrumBackground;
 
 /* 通用淘晶驰命令格式化缓冲区。所有调用都位于主循环，故不需要加锁。 */
 char str1[TJC_TEXT_BUFFER_LENGTH];
@@ -272,6 +283,56 @@ static uint8_t TjcHmi_DecodeFrame(TjcHmiEvent *event)
 }
 
 /**
+ * @brief 向按键帧解析器投递单个字节。
+ * @return 刚好解析出一条业务事件时返回1。
+ */
+static uint8_t TjcHmi_ParseEventByte(uint8_t byte,
+                                    TjcHmiEvent *event,
+                                    uint8_t *cycles)
+{
+    if ((event == NULL) || (cycles == NULL))
+    {
+        return 0U;
+    }
+
+    if ((s_RxFrameLength == 0U) &&
+        ((byte == (uint8_t)'1') || (byte == (uint8_t)'3')))
+    {
+        *cycles = (uint8_t)(byte - (uint8_t)'0');
+        *event = TJC_HMI_EVENT_SET_CYCLES;
+        return 1U;
+    }
+
+    if (s_RxFrameLength == 0U)
+    {
+        if (byte == 0x55U)
+        {
+            s_RxFrame[0] = byte;
+            s_RxFrameLength = 1U;
+        }
+        return 0U;
+    }
+
+    /* 有效按键帧不含0x55，中途看到帧头时立即重同步。 */
+    if (byte == 0x55U)
+    {
+        s_RxFrame[0] = byte;
+        s_RxFrameLength = 1U;
+        return 0U;
+    }
+
+    s_RxFrame[s_RxFrameLength] = byte;
+    s_RxFrameLength++;
+    if (s_RxFrameLength < TJC_RX_FRAME_LENGTH)
+    {
+        return 0U;
+    }
+
+    s_RxFrameLength = 0U;
+    return TjcHmi_DecodeFrame(event);
+}
+
+/**
  * @brief 初始化整个淘晶驰模块。
  *
  * 调用位置为MX_GPIO_Init/MX_USART1_UART_Init之后。函数先清空解析状态和
@@ -285,6 +346,14 @@ void TjcHmi_Init(void)
     s_RxFrameLength = 0U;
     s_NextStartLabelTick = now + TJC_START_LABEL_DELAY_MS;
     s_RxErrorCount = 0UL;
+    s_PendingEvent = TJC_HMI_EVENT_NONE;
+    s_PendingCycles = 0U;
+    s_SpectrumGeometryReady = 0U;
+    s_SpectrumX = 0U;
+    s_SpectrumY = 0U;
+    s_SpectrumWidth = 0U;
+    s_SpectrumHeight = 0U;
+    s_SpectrumBackground = 0U;
     initRingBuffer();
     TjcHmi_UartInit();
 }
@@ -309,48 +378,18 @@ uint8_t TjcHmi_ReadEvent(TjcHmiEvent *event, uint8_t *cycles)
 
     *event = TJC_HMI_EVENT_NONE;
 
+    if (s_PendingEvent != TJC_HMI_EVENT_NONE)
+    {
+        *event = s_PendingEvent;
+        *cycles = s_PendingCycles;
+        s_PendingEvent = TJC_HMI_EVENT_NONE;
+        s_PendingCycles = 0U;
+        return 1U;
+    }
+
     while (TjcHmi_ReadByte(&byte) != 0U)
     {
-        /* 保留原无屏联调的单字符命令。 */
-        if ((s_RxFrameLength == 0U) &&
-            ((byte == (uint8_t)'1') || (byte == (uint8_t)'3')))
-        {
-            *cycles = (uint8_t)(byte - (uint8_t)'0');
-            *event = TJC_HMI_EVENT_SET_CYCLES;
-            return 1U;
-        }
-
-        if (s_RxFrameLength == 0U)
-        {
-            if (byte == 0x55U)
-            {
-                s_RxFrame[0] = byte;
-                s_RxFrameLength = 1U;
-            }
-            continue;
-        }
-
-        /*
-         * 本协议有效载荷不包含0x55。收帧中再次看到帧头，说明前一帧
-         * 已损坏或有启动噪声，立即从新帧头重新同步，避免吞掉本次按键。
-         */
-        if (byte == 0x55U)
-        {
-            s_RxFrame[0] = byte;
-            s_RxFrameLength = 1U;
-            continue;
-        }
-
-        s_RxFrame[s_RxFrameLength] = byte;
-        s_RxFrameLength++;
-
-        if (s_RxFrameLength < TJC_RX_FRAME_LENGTH)
-        {
-            continue;
-        }
-
-        s_RxFrameLength = 0U;
-        if (TjcHmi_DecodeFrame(event) != 0U)
+        if (TjcHmi_ParseEventByte(byte, event, cycles) != 0U)
         {
             /* 收到屏幕按键说明页面已经启动，下一轮立即重发静态文字。 */
             s_NextStartLabelTick = HAL_GetTick();
@@ -412,7 +451,8 @@ void TjcHmi_SetStatusText(const char *text)
     }
 }
 
-uint8_t TjcHmi_GetComponentWidth(const char *name, uint16_t *width)
+static uint8_t TjcHmi_GetNumericValue(const char *expression,
+                                     uint32_t *value)
 {
     char command[32];
     uint8_t payload[4] = {0U, 0U, 0U, 0U};
@@ -422,19 +462,19 @@ uint8_t TjcHmi_GetComponentWidth(const char *name, uint16_t *width)
     uint32_t deadline;
     int written;
 
-    if ((name == NULL) || (width == NULL))
+    if ((expression == NULL) || (value == NULL))
     {
         return 0U;
     }
 
-    written = snprintf(command, sizeof(command), "get %s.w", name);
+    written = snprintf(command, sizeof(command), "get %s", expression);
     if ((written <= 0) || ((size_t)written >= sizeof(command)))
     {
         return 0U;
     }
 
     tjc_send_string(command);
-    deadline = HAL_GetTick() + 50U;
+    deadline = HAL_GetTick() + TJC_NUMERIC_RESPONSE_TIMEOUT_MS;
 
     while ((int32_t)(HAL_GetTick() - deadline) < 0)
     {
@@ -450,6 +490,20 @@ uint8_t TjcHmi_GetComponentWidth(const char *name, uint16_t *width)
                     payload_index = 0U;
                     terminator_count = 0U;
                 }
+                else
+                {
+                    TjcHmiEvent event = TJC_HMI_EVENT_NONE;
+                    uint8_t cycles = 0U;
+
+                    if ((TjcHmi_ParseEventByte(byte,
+                                               &event,
+                                               &cycles) != 0U) &&
+                        (s_PendingEvent == TJC_HMI_EVENT_NONE))
+                    {
+                        s_PendingEvent = event;
+                        s_PendingCycles = cycles;
+                    }
+                }
                 continue;
             }
 
@@ -464,18 +518,14 @@ uint8_t TjcHmi_GetComponentWidth(const char *name, uint16_t *width)
                 terminator_count++;
                 if (terminator_count == 3U)
                 {
-                    uint32_t value =
+                    uint32_t response_value =
                         (uint32_t)payload[0] |
                         ((uint32_t)payload[1] << 8U) |
                         ((uint32_t)payload[2] << 16U) |
                         ((uint32_t)payload[3] << 24U);
 
-                    if ((value >= 16UL) && (value <= 1024UL))
-                    {
-                        *width = (uint16_t)value;
-                        return 1U;
-                    }
-                    return 0U;
+                    *value = response_value;
+                    return 1U;
                 }
                 continue;
             }
@@ -489,6 +539,135 @@ uint8_t TjcHmi_GetComponentWidth(const char *name, uint16_t *width)
     }
 
     return 0U;
+}
+
+uint8_t TjcHmi_GetComponentWidth(const char *name, uint16_t *width)
+{
+    char expression[24];
+    uint32_t value;
+    int written;
+
+    if ((name == NULL) || (width == NULL))
+    {
+        return 0U;
+    }
+
+    written = snprintf(expression, sizeof(expression), "%s.w", name);
+    if ((written <= 0) || ((size_t)written >= sizeof(expression)) ||
+        (TjcHmi_GetNumericValue(expression, &value) == 0U) ||
+        (value < 16UL) || (value > 1024UL))
+    {
+        return 0U;
+    }
+
+    *width = (uint16_t)value;
+    return 1U;
+}
+
+uint8_t TjcHmi_DrawSpectrumXAxis(void)
+{
+    static const uint32_t frequencies_hz[6] =
+        {10000UL, 100000UL, 200000UL, 300000UL, 400000UL, 500000UL};
+    static const char *labels[6] =
+        {"10000", "100000", "200000", "300000", "400000", "500000 Hz"};
+    uint32_t axis_y;
+    uint8_t index;
+
+    if (s_SpectrumGeometryReady == 0U)
+    {
+        uint32_t x;
+        uint32_t y;
+        uint32_t width;
+        uint32_t height;
+        uint32_t background = 0UL;
+
+        if ((TjcHmi_GetNumericValue("s1.x", &x) == 0U) ||
+            (TjcHmi_GetNumericValue("s1.y", &y) == 0U) ||
+            (TjcHmi_GetNumericValue("s1.w", &width) == 0U) ||
+            (TjcHmi_GetNumericValue("s1.h", &height) == 0U) ||
+            (x > 65535UL) || (y > 65535UL) ||
+            (width < 16UL) || (width > 1024UL) ||
+            (height < 8UL) || (height > 1024UL) ||
+            (x + width > 65536UL) || (y + height > 65536UL))
+        {
+            return 0U;
+        }
+
+        /* bco读取失败时默认为黑色，不影响轴线本身。 */
+        (void)TjcHmi_GetNumericValue("s1.bco", &background);
+        s_SpectrumX = (uint16_t)x;
+        s_SpectrumY = (uint16_t)y;
+        s_SpectrumWidth = (uint16_t)width;
+        s_SpectrumHeight = (uint16_t)height;
+        s_SpectrumBackground = (uint16_t)(background & 0xFFFFUL);
+        s_SpectrumGeometryReady = 1U;
+    }
+
+    axis_y = (uint32_t)s_SpectrumY +
+             (uint32_t)s_SpectrumHeight - 1UL;
+    (void)snprintf(str1,
+                   sizeof(str1),
+                   "line %u,%lu,%u,%lu,%lu",
+                   (unsigned int)s_SpectrumX,
+                   (unsigned long)axis_y,
+                   (unsigned int)(s_SpectrumX + s_SpectrumWidth - 1U),
+                   (unsigned long)axis_y,
+                   (unsigned long)TJC_SPECTRUM_AXIS_COLOR);
+    tjc_send_string(str1);
+
+    for (index = 0U; index < 6U; index++)
+    {
+        uint32_t tick_x = (uint32_t)s_SpectrumX +
+            ((frequencies_hz[index] - 10000UL) *
+             (uint32_t)(s_SpectrumWidth - 1U) + 245000UL) /
+            490000UL;
+        uint32_t label_width = (index == 5U) ? 70UL : 54UL;
+        uint32_t label_x;
+
+        if (label_width > (uint32_t)s_SpectrumWidth)
+        {
+            label_width = (uint32_t)s_SpectrumWidth;
+        }
+
+        (void)snprintf(str1,
+                       sizeof(str1),
+                       "line %lu,%lu,%lu,%lu,%lu",
+                       (unsigned long)tick_x,
+                       (unsigned long)(axis_y - 3UL),
+                       (unsigned long)tick_x,
+                       (unsigned long)axis_y,
+                       (unsigned long)TJC_SPECTRUM_AXIS_COLOR);
+        tjc_send_string(str1);
+
+        if (tick_x < (uint32_t)s_SpectrumX + label_width / 2UL)
+        {
+            label_x = (uint32_t)s_SpectrumX;
+        }
+        else if (tick_x + label_width / 2UL >
+                 (uint32_t)s_SpectrumX + (uint32_t)s_SpectrumWidth)
+        {
+            label_x = (uint32_t)s_SpectrumX +
+                      (uint32_t)s_SpectrumWidth - label_width;
+        }
+        else
+        {
+            label_x = tick_x - label_width / 2UL;
+        }
+
+        (void)snprintf(str1,
+                       sizeof(str1),
+                       "xstr %lu,%lu,%lu,%lu,0,%lu,%u,1,1,1,\"%s\"",
+                       (unsigned long)label_x,
+                       (unsigned long)(axis_y + 2UL),
+                       (unsigned long)label_width,
+                       (unsigned long)TJC_SPECTRUM_LABEL_HEIGHT,
+                       (unsigned long)TJC_SPECTRUM_AXIS_COLOR,
+                       (unsigned int)s_SpectrumBackground,
+                       labels[index]);
+        tjc_send_string(str1);
+    }
+
+    return 1U;
 }
 
 /**

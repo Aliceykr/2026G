@@ -16,8 +16,8 @@ void GSignalFlow_Init(void);
  * 裸机主循环任务：
  * 1. 读取 1.25 MSPS 分析帧并完成 FFT、频率和参数计算。
  * 2. 将频率、Vpp、Urms及H1~H3结果发送到淘晶驰屏。
- * 3. 读取5 MSPS波形帧并向s0发送256点时域波形。
- * 当前暂不显示频谱图s1。
+ * 3. 将10kHz~500kHz FFT频谱按低频到高频发送到s1。
+ * 4. 读取5 MSPS波形帧并向s0发送时域波形。
  */
 void GSignalFlow_Process(void);
 

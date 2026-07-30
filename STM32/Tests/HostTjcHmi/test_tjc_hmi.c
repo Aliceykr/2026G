@@ -53,6 +53,8 @@ static int ExpectEvent(const uint8_t *data,
 int main(void)
 {
     uint16_t component_width = 0U;
+    TjcHmiEvent deferred_event = TJC_HMI_EVENT_NONE;
+    uint8_t deferred_cycles = 0U;
     static const uint8_t button_one[] =
         {0x55U, 0x01U, 0x00U, 0x00U, 0xFFU, 0xFFU, 0xFFU};
     static const uint8_t button_three[] =
@@ -66,6 +68,17 @@ int main(void)
     static const uint8_t ascii_three[] = {'3'};
     static const uint8_t width_512_response[] =
         {0x71U, 0x00U, 0x02U, 0x00U, 0x00U, 0xFFU, 0xFFU, 0xFFU};
+    static const uint8_t button_during_get[] =
+        {0x55U, 0x02U, 0x00U, 0x00U, 0xFFU, 0xFFU, 0xFFU,
+         0x71U, 0x00U, 0x02U, 0x00U, 0x00U, 0xFFU, 0xFFU, 0xFFU};
+    static const uint8_t spectrum_geometry_responses[] =
+        {
+            0x71U, 0x64U, 0x00U, 0x00U, 0x00U, 0xFFU, 0xFFU, 0xFFU,
+            0x71U, 0x32U, 0x00U, 0x00U, 0x00U, 0xFFU, 0xFFU, 0xFFU,
+            0x71U, 0x00U, 0x02U, 0x00U, 0x00U, 0xFFU, 0xFFU, 0xFFU,
+            0x71U, 0x78U, 0x00U, 0x00U, 0x00U, 0xFFU, 0xFFU, 0xFFU,
+            0x71U, 0x00U, 0x00U, 0x00U, 0x00U, 0xFFU, 0xFFU, 0xFFU
+        };
 
     TjcHmi_Init();
     s_TestTick = 0U;
@@ -107,6 +120,24 @@ int main(void)
         return 1;
     }
 
-    puts("PASS TJC HMI: buttons, header resync and component width response");
+    LoadInput(button_during_get, sizeof(button_during_get));
+    if ((TjcHmi_GetComponentWidth("s1", &component_width) == 0U) ||
+        (component_width != 512U) ||
+        (TjcHmi_ReadEvent(&deferred_event, &deferred_cycles) == 0U) ||
+        (deferred_event != TJC_HMI_EVENT_TOGGLE_CYCLES))
+    {
+        puts("FAIL TJC HMI deferred button during get");
+        return 1;
+    }
+
+    LoadInput(spectrum_geometry_responses,
+              sizeof(spectrum_geometry_responses));
+    if (TjcHmi_DrawSpectrumXAxis() == 0U)
+    {
+        puts("FAIL TJC HMI spectrum x-axis geometry");
+        return 1;
+    }
+
+    puts("PASS TJC HMI: buttons, deferred get event, width and spectrum axis");
     return 0;
 }

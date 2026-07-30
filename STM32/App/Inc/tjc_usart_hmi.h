@@ -63,6 +63,12 @@ void TjcHmi_SetStatusText(const char *text);
 uint8_t TjcHmi_GetComponentWidth(const char *name, uint16_t *width);
 
 /*
+ * 在s1底部绘制10kHz~500kHz横轴、刻度和Hz标注。
+ * 控件坐标会从屏幕实时读取并缓存，失败返回0。
+ */
+uint8_t TjcHmi_DrawSpectrumXAxis(void);
+
+/*
  * 淘晶驰ASCII指令发送辅助函数：tjc_send_string/txt/val/nstring会自动
  * 追加FF FF FF；uart_send_char/string不会自动追加。
  */

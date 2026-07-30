@@ -22,6 +22,9 @@
 #define G_FLOW_WAVE_VERTICAL_OFFSET   20U
 #define G_FLOW_WAVE_FALLBACK_POINTS   512U
 #define G_FLOW_WAVE_MAX_POINTS        1024U
+#define G_FLOW_SPECTRUM_HEIGHT_DIVISOR 3U
+#define G_FLOW_SPECTRUM_FALLBACK_POINTS 512U
+#define G_FLOW_SPECTRUM_MAX_POINTS    1024U
 #define G_FLOW_BUTTON_DEBOUNCE_MS     120U
 
 typedef enum
@@ -59,6 +62,9 @@ static uint32_t s_LastStartEventTick;
 static uint32_t s_LastCycleEventTick;
 static uint16_t s_WaveDisplayPoints;
 static uint8_t s_WaveDisplay[G_FLOW_WAVE_MAX_POINTS];
+static uint16_t s_SpectrumDisplayPoints;
+static uint8_t s_SpectrumDisplay[G_FLOW_SPECTRUM_MAX_POINTS];
+static uint8_t s_SpectrumScreenInitialized;
 
 static void GSignalFlow_SendText(const char *text);
 static void GSignalFlow_SendStartup(void);
@@ -77,6 +83,7 @@ static void GSignalFlow_QueueHmiMeasurement(void);
 static void GSignalFlow_ServiceHmiMeasurement(void);
 static void GSignalFlow_UpdateHmiMeasurementField(uint8_t field);
 static void GSignalFlow_UpdateHmiNoSignal(void);
+static uint8_t GSignalFlow_UpdateHmiSpectrum(uint8_t signal_valid);
 static void GSignalFlow_UpdateHmiWaveform(void);
 static uint8_t GSignalFlow_BuildAndDisplayWaveform(uint8_t cycles);
 
@@ -87,6 +94,7 @@ void GSignalFlow_Init(void)
     memset(&s_Measurement, 0, sizeof(s_Measurement));
     memset(&s_Waveform, 0, sizeof(s_Waveform));
     memset(s_WaveDisplay, 0, sizeof(s_WaveDisplay));
+    memset(s_SpectrumDisplay, 0, sizeof(s_SpectrumDisplay));
     s_State = G_FLOW_STATE_IDLE;
     s_NextActionTick = HAL_GetTick();
     s_ReportSequence = 0UL;
@@ -107,6 +115,8 @@ void GSignalFlow_Init(void)
     s_LastStartEventTick = HAL_GetTick() - G_FLOW_BUTTON_DEBOUNCE_MS;
     s_LastCycleEventTick = HAL_GetTick() - G_FLOW_BUTTON_DEBOUNCE_MS;
     s_WaveDisplayPoints = 0U;
+    s_SpectrumDisplayPoints = 0U;
+    s_SpectrumScreenInitialized = 0U;
 
     TjcHmi_Init();
 
@@ -132,6 +142,10 @@ void GSignalFlow_Process(void)
         {
             GSignalFlow_UpdateHmiPlaceholders();
             TjcHmi_SetComputeBusy(0U);
+            if (s_SpectrumScreenInitialized == 0U)
+            {
+                (void)GSignalFlow_UpdateHmiSpectrum(0U);
+            }
             s_NextIdleHmiTextTick = now + G_FLOW_HMI_IDLE_REFRESH_MS;
         }
         return;
@@ -212,6 +226,7 @@ void GSignalFlow_Process(void)
         s_ActiveSequence = s_ReportSequence;
         s_ReportSequence++;
         s_AnalysisElapsedMs = HAL_GetTick() - s_CycleStartTick;
+        (void)GSignalFlow_UpdateHmiSpectrum(1U);
         GSignalFlow_SendResult();
         if (GSignalFlow_SendMeasurement() == 0U)
         {
@@ -836,6 +851,70 @@ static void GSignalFlow_UpdateHmiNoSignal(void)
 {
     s_HmiMeasurementPending = 0U;
     GSignalFlow_UpdateHmiPlaceholders();
+    (void)GSignalFlow_UpdateHmiSpectrum(0U);
+}
+
+static uint8_t GSignalFlow_UpdateHmiSpectrum(uint8_t signal_valid)
+{
+    uint16_t point;
+    uint16_t display_points = s_SpectrumDisplayPoints;
+    uint8_t width_ready = 1U;
+    uint8_t axis_ready;
+
+    if (display_points == 0U)
+    {
+        if (TjcHmi_GetComponentWidth("s1", &display_points) != 0U)
+        {
+            s_SpectrumDisplayPoints = display_points;
+        }
+        else
+        {
+            display_points = G_FLOW_SPECTRUM_FALLBACK_POINTS;
+            width_ready = 0U;
+        }
+    }
+
+    if (display_points > G_FLOW_SPECTRUM_MAX_POINTS)
+    {
+        display_points = G_FLOW_SPECTRUM_MAX_POINTS;
+    }
+
+    if ((signal_valid == 0U) ||
+        (SpectrumAnalyzer_BuildDisplay(s_SpectrumDisplay,
+                                       display_points) == 0U))
+    {
+        memset(s_SpectrumDisplay, 0, display_points);
+    }
+    else
+    {
+        /*
+         * BuildDisplay按10kHz->500kHz的FFT bin递增顺序输出。
+         * 仅压缩纵坐标上限，0下限保持不变。
+         */
+        for (point = 0U; point < display_points; point++)
+        {
+            s_SpectrumDisplay[point] = (uint8_t)(
+                s_SpectrumDisplay[point] /
+                G_FLOW_SPECTRUM_HEIGHT_DIVISOR);
+        }
+    }
+
+    tjc_clear_wave("s1.id", 0);
+    tjc_send_wave("s1.id",
+                  0,
+                  s_SpectrumDisplay,
+                  display_points);
+
+    /* 频谱为空时全零谱线本身也保留底部横轴。 */
+    axis_ready = TjcHmi_DrawSpectrumXAxis();
+    if ((width_ready != 0U) && (axis_ready != 0U))
+    {
+        s_SpectrumScreenInitialized = 1U;
+        return 1U;
+    }
+
+    s_SpectrumScreenInitialized = 0U;
+    return 0U;
 }
 
 static uint8_t GSignalFlow_BuildAndDisplayWaveform(uint8_t cycles)
