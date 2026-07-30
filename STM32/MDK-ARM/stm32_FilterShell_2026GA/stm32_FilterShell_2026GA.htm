@@ -3,7 +3,7 @@
 <title>Static Call Graph - [stm32_FilterShell_2026GA\stm32_FilterShell_2026GA.axf]</title></head>
 <body><HR>
 <H1>Static Call Graph for image stm32_FilterShell_2026GA\stm32_FilterShell_2026GA.axf</H1><HR>
-<BR><P>#&#060CALLGRAPH&#062# ARM Linker, 6230001: Last Updated: Thu Jul 30 21:52:31 2026
+<BR><P>#&#060CALLGRAPH&#062# ARM Linker, 6230001: Last Updated: Thu Jul 30 21:59:40 2026
 <BR><P>
 <H3>Maximum Stack Usage =       1352 bytes + Unknown(Functions without stacksize, Cycles, Untraceable Function Pointers)</H3><H3>
 Call chain for Maximum Stack Depth:</H3>
@@ -577,14 +577,14 @@ Global Symbols
 </UL>
 <BR>[Calls]<UL><LI><a href="#[83]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;_printf_char_common
 </UL>
-<BR>[Called By]<UL><LI><a href="#[bd]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;tjc_send_wave
-<LI><a href="#[bc]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;tjc_clear_wave
-<LI><a href="#[b7]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;TjcHmi_GetComponentWidth
+<BR>[Called By]<UL><LI><a href="#[c0]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;tjc_send_wave
+<LI><a href="#[bf]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;TjcHmi_GetComponentWidth
 <LI><a href="#[ac]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;TjcHmi_SetStatusText
-<LI><a href="#[b5]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;tjc_send_txt
+<LI><a href="#[b7]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;tjc_send_txt
+<LI><a href="#[b5]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;tjc_clear_wave
 <LI><a href="#[b4]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;TjcHmi_SetComputeBusy
 <LI><a href="#[b3]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;TjcHmi_ReadEvent
-<LI><a href="#[be]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSignalFlow_SendNoSignal
+<LI><a href="#[bc]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSignalFlow_SendNoSignal
 <LI><a href="#[bb]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSignalFlow_SendMeasurement
 <LI><a href="#[ba]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSignalFlow_SendResult
 <LI><a href="#[aa]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSignalFlow_AbortCycle
@@ -647,15 +647,15 @@ Global Symbols
 <P><STRONG><a name="[ab]"></a>strlen</STRONG> (Thumb, 62 bytes, Stack size 8 bytes, strlen.o(.text))
 <BR><BR>[Stack]<UL><LI>Max Depth = 8<LI>Call Chain = strlen
 </UL>
-<BR>[Called By]<UL><LI><a href="#[bd]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;tjc_send_wave
-<LI><a href="#[bc]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;tjc_clear_wave
-<LI><a href="#[b7]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;TjcHmi_GetComponentWidth
-<LI><a href="#[b6]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;tjc_send_string
+<BR>[Called By]<UL><LI><a href="#[c0]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;tjc_send_wave
+<LI><a href="#[bf]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;TjcHmi_GetComponentWidth
 <LI><a href="#[ac]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;TjcHmi_SetStatusText
-<LI><a href="#[b5]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;tjc_send_txt
+<LI><a href="#[b7]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;tjc_send_txt
+<LI><a href="#[b6]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;tjc_send_string
+<LI><a href="#[b5]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;tjc_clear_wave
 <LI><a href="#[b4]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;TjcHmi_SetComputeBusy
 <LI><a href="#[b3]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;TjcHmi_ReadEvent
-<LI><a href="#[be]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSignalFlow_SendNoSignal
+<LI><a href="#[bc]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSignalFlow_SendNoSignal
 <LI><a href="#[bb]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSignalFlow_SendMeasurement
 <LI><a href="#[ba]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSignalFlow_SendResult
 <LI><a href="#[aa]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSignalFlow_AbortCycle
@@ -668,10 +668,8 @@ Global Symbols
 </UL>
 <BR>[Calls]<UL><LI><a href="#[8c]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;_memset_w
 </UL>
-<BR>[Called By]<UL><LI><a href="#[bf]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSignalFlow_UpdateHmiNoSignal
-<LI><a href="#[ae]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSignalFlow_UpdateHmiWaveform
+<BR>[Called By]<UL><LI><a href="#[ae]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSignalFlow_UpdateHmiWaveform
 <LI><a href="#[b9]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSignalFlow_UpdateHmiSpectrum
-<LI><a href="#[b2]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSignalFlow_Process
 </UL>
 
 <P><STRONG><a name="[11d]"></a>__aeabi_memset8</STRONG> (Thumb, 0 bytes, Stack size 0 bytes, aeabi_memset4.o(.text), UNUSED)
@@ -877,7 +875,7 @@ Global Symbols
 <BR>[Called By]<UL><LI><a href="#[b2]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSignalFlow_Process
 </UL>
 
-<P><STRONG><a name="[c0]"></a>GMeasurementCalibration_Get</STRONG> (Thumb, 10 bytes, Stack size 0 bytes, gmeasurementcalibration.o(.text.GMeasurementCalibration_Get))
+<P><STRONG><a name="[be]"></a>GMeasurementCalibration_Get</STRONG> (Thumb, 10 bytes, Stack size 0 bytes, gmeasurementcalibration.o(.text.GMeasurementCalibration_Get))
 <BR><BR>[Called By]<UL><LI><a href="#[bb]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSignalFlow_SendMeasurement
 </UL>
 
@@ -916,7 +914,7 @@ Global Symbols
 </UL>
 <BR>[Calls]<UL><LI><a href="#[a9]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;HAL_UART_Transmit
 </UL>
-<BR>[Called By]<UL><LI><a href="#[be]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSignalFlow_SendNoSignal
+<BR>[Called By]<UL><LI><a href="#[bc]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSignalFlow_SendNoSignal
 <LI><a href="#[bb]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSignalFlow_SendMeasurement
 <LI><a href="#[ba]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSignalFlow_SendResult
 <LI><a href="#[aa]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSignalFlow_AbortCycle
@@ -924,7 +922,7 @@ Global Symbols
 <LI><a href="#[af]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSignalFlow_Init
 </UL>
 
-<P><STRONG><a name="[af]"></a>GSignalFlow_Init</STRONG> (Thumb, 244 bytes, Stack size 120 bytes, gsignalflow.o(.text.GSignalFlow_Init))
+<P><STRONG><a name="[af]"></a>GSignalFlow_Init</STRONG> (Thumb, 240 bytes, Stack size 120 bytes, gsignalflow.o(.text.GSignalFlow_Init))
 <BR><BR>[Stack]<UL><LI>Max Depth = 280 + Unknown Stack Size
 <LI>Call Chain = GSignalFlow_Init &rArr; Fpga_ReadId &rArr; FpgaLink_Transfer32 &rArr; FpgaLink_RecoverBus &rArr; HAL_SPI_Abort &rArr; HAL_DMA_Abort
 </UL>
@@ -940,21 +938,19 @@ Global Symbols
 <BR>[Called By]<UL><LI><a href="#[7c]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;main
 </UL>
 
-<P><STRONG><a name="[b2]"></a>GSignalFlow_Process</STRONG> (Thumb, 2300 bytes, Stack size 176 bytes, gsignalflow.o(.text.GSignalFlow_Process))
+<P><STRONG><a name="[b2]"></a>GSignalFlow_Process</STRONG> (Thumb, 2216 bytes, Stack size 176 bytes, gsignalflow.o(.text.GSignalFlow_Process))
 <BR><BR>[Stack]<UL><LI>Max Depth = 1352 + Unknown Stack Size
 <LI>Call Chain = GSignalFlow_Process &rArr; SpectrumAnalyzer_Run &rArr; arm_rfft_fast_f32 &rArr; arm_cfft_f32 &rArr; arm_cfft_radix8by4_f32 &rArr; arm_radix8_butterfly_f32
 </UL>
-<BR>[Calls]<UL><LI><a href="#[bd]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;tjc_send_wave
-<LI><a href="#[bc]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;tjc_clear_wave
-<LI><a href="#[b8]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;SpectrumAnalyzer_Run
-<LI><a href="#[b7]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;TjcHmi_GetComponentWidth
-<LI><a href="#[b6]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;tjc_send_string
+<BR>[Calls]<UL><LI><a href="#[b8]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;SpectrumAnalyzer_Run
 <LI><a href="#[ac]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;TjcHmi_SetStatusText
-<LI><a href="#[b5]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;tjc_send_txt
+<LI><a href="#[b7]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;tjc_send_txt
+<LI><a href="#[b6]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;tjc_send_string
+<LI><a href="#[b5]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;tjc_clear_wave
 <LI><a href="#[b4]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;TjcHmi_SetComputeBusy
 <LI><a href="#[b3]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;TjcHmi_ReadEvent
-<LI><a href="#[bf]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSignalFlow_UpdateHmiNoSignal
-<LI><a href="#[be]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSignalFlow_SendNoSignal
+<LI><a href="#[bd]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSignalFlow_UpdateHmiNoSignal
+<LI><a href="#[bc]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSignalFlow_SendNoSignal
 <LI><a href="#[ae]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSignalFlow_UpdateHmiWaveform
 <LI><a href="#[bb]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSignalFlow_SendMeasurement
 <LI><a href="#[ba]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSignalFlow_SendResult
@@ -968,7 +964,6 @@ Global Symbols
 <LI><a href="#[b0]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;HAL_GetTick
 <LI><a href="#[a8]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSerial_Transmit
 <LI><a href="#[a1]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;__aeabi_memclr4
-<LI><a href="#[8b]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;__aeabi_memset4
 <LI><a href="#[ab]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;strlen
 <LI><a href="#[82]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;__2snprintf
 </UL>
@@ -993,12 +988,12 @@ Global Symbols
 </UL>
 <BR>[Calls]<UL><LI><a href="#[b0]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;HAL_GetTick
 </UL>
-<BR>[Called By]<UL><LI><a href="#[bd]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;tjc_send_wave
-<LI><a href="#[bc]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;tjc_clear_wave
-<LI><a href="#[b7]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;TjcHmi_GetComponentWidth
-<LI><a href="#[b6]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;tjc_send_string
+<BR>[Called By]<UL><LI><a href="#[c0]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;tjc_send_wave
+<LI><a href="#[bf]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;TjcHmi_GetComponentWidth
 <LI><a href="#[ac]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;TjcHmi_SetStatusText
-<LI><a href="#[b5]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;tjc_send_txt
+<LI><a href="#[b7]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;tjc_send_txt
+<LI><a href="#[b6]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;tjc_send_string
+<LI><a href="#[b5]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;tjc_clear_wave
 <LI><a href="#[b4]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;TjcHmi_SetComputeBusy
 <LI><a href="#[b3]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;TjcHmi_ReadEvent
 <LI><a href="#[b1]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;TjcHmi_Init
@@ -1022,7 +1017,7 @@ Global Symbols
 </UL>
 
 <P><STRONG><a name="[b0]"></a>HAL_GetTick</STRONG> (Thumb, 12 bytes, Stack size 0 bytes, stm32f4xx_hal.o(.text.HAL_GetTick))
-<BR><BR>[Called By]<UL><LI><a href="#[b7]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;TjcHmi_GetComponentWidth
+<BR><BR>[Called By]<UL><LI><a href="#[bf]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;TjcHmi_GetComponentWidth
 <LI><a href="#[b3]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;TjcHmi_ReadEvent
 <LI><a href="#[b1]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;TjcHmi_Init
 <LI><a href="#[c2]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;HAL_Delay
@@ -1220,12 +1215,12 @@ Global Symbols
 </UL>
 <BR>[Calls]<UL><LI><a href="#[b0]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;HAL_GetTick
 </UL>
-<BR>[Called By]<UL><LI><a href="#[bd]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;tjc_send_wave
-<LI><a href="#[bc]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;tjc_clear_wave
-<LI><a href="#[b7]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;TjcHmi_GetComponentWidth
-<LI><a href="#[b6]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;tjc_send_string
+<BR>[Called By]<UL><LI><a href="#[c0]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;tjc_send_wave
+<LI><a href="#[bf]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;TjcHmi_GetComponentWidth
 <LI><a href="#[ac]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;TjcHmi_SetStatusText
-<LI><a href="#[b5]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;tjc_send_txt
+<LI><a href="#[b7]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;tjc_send_txt
+<LI><a href="#[b6]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;tjc_send_string
+<LI><a href="#[b5]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;tjc_clear_wave
 <LI><a href="#[b4]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;TjcHmi_SetComputeBusy
 <LI><a href="#[b3]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;TjcHmi_ReadEvent
 <LI><a href="#[b1]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;TjcHmi_Init
@@ -1325,7 +1320,7 @@ Global Symbols
 <P><STRONG><a name="[5b]"></a>SystemInit</STRONG> (Thumb, 18 bytes, Stack size 0 bytes, system_stm32f4xx.o(.text.SystemInit))
 <BR>[Address Reference Count : 1]<UL><LI> startup_stm32f407xx.o(.text)
 </UL>
-<P><STRONG><a name="[b7]"></a>TjcHmi_GetComponentWidth</STRONG> (Thumb, 772 bytes, Stack size 112 bytes, tjc_usart_hmi.o(.text.TjcHmi_GetComponentWidth))
+<P><STRONG><a name="[bf]"></a>TjcHmi_GetComponentWidth</STRONG> (Thumb, 772 bytes, Stack size 112 bytes, tjc_usart_hmi.o(.text.TjcHmi_GetComponentWidth))
 <BR><BR>[Stack]<UL><LI>Max Depth = 248 + Unknown Stack Size
 <LI>Call Chain = TjcHmi_GetComponentWidth &rArr; __2snprintf &rArr; _printf_char_common &rArr; __printf
 </UL>
@@ -1335,10 +1330,8 @@ Global Symbols
 <LI><a href="#[ab]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;strlen
 <LI><a href="#[82]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;__2snprintf
 </UL>
-<BR>[Called By]<UL><LI><a href="#[bf]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSignalFlow_UpdateHmiNoSignal
-<LI><a href="#[ae]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSignalFlow_UpdateHmiWaveform
+<BR>[Called By]<UL><LI><a href="#[ae]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSignalFlow_UpdateHmiWaveform
 <LI><a href="#[b9]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSignalFlow_UpdateHmiSpectrum
-<LI><a href="#[b2]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSignalFlow_Process
 </UL>
 
 <P><STRONG><a name="[b1]"></a>TjcHmi_Init</STRONG> (Thumb, 264 bytes, Stack size 40 bytes, tjc_usart_hmi.o(.text.TjcHmi_Init))
@@ -1492,7 +1485,7 @@ Global Symbols
 <BR>[Called By]<UL><LI><a href="#[7b]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;__rt_entry_main
 </UL>
 
-<P><STRONG><a name="[bc]"></a>tjc_clear_wave</STRONG> (Thumb, 128 bytes, Stack size 16 bytes, tjc_usart_hmi.o(.text.tjc_clear_wave))
+<P><STRONG><a name="[b5]"></a>tjc_clear_wave</STRONG> (Thumb, 128 bytes, Stack size 16 bytes, tjc_usart_hmi.o(.text.tjc_clear_wave))
 <BR><BR>[Stack]<UL><LI>Max Depth = 152 + Unknown Stack Size
 <LI>Call Chain = tjc_clear_wave &rArr; __2snprintf &rArr; _printf_char_common &rArr; __printf
 </UL>
@@ -1501,7 +1494,7 @@ Global Symbols
 <LI><a href="#[ab]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;strlen
 <LI><a href="#[82]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;__2snprintf
 </UL>
-<BR>[Called By]<UL><LI><a href="#[bf]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSignalFlow_UpdateHmiNoSignal
+<BR>[Called By]<UL><LI><a href="#[bd]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSignalFlow_UpdateHmiNoSignal
 <LI><a href="#[ae]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSignalFlow_UpdateHmiWaveform
 <LI><a href="#[b9]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSignalFlow_UpdateHmiSpectrum
 <LI><a href="#[b2]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSignalFlow_Process
@@ -1514,12 +1507,12 @@ Global Symbols
 <LI><a href="#[a9]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;HAL_UART_Transmit
 <LI><a href="#[ab]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;strlen
 </UL>
-<BR>[Called By]<UL><LI><a href="#[bf]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSignalFlow_UpdateHmiNoSignal
+<BR>[Called By]<UL><LI><a href="#[bd]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSignalFlow_UpdateHmiNoSignal
 <LI><a href="#[b9]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSignalFlow_UpdateHmiSpectrum
 <LI><a href="#[b2]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSignalFlow_Process
 </UL>
 
-<P><STRONG><a name="[b5]"></a>tjc_send_txt</STRONG> (Thumb, 136 bytes, Stack size 16 bytes, tjc_usart_hmi.o(.text.tjc_send_txt))
+<P><STRONG><a name="[b7]"></a>tjc_send_txt</STRONG> (Thumb, 136 bytes, Stack size 16 bytes, tjc_usart_hmi.o(.text.tjc_send_txt))
 <BR><BR>[Stack]<UL><LI>Max Depth = 152 + Unknown Stack Size
 <LI>Call Chain = tjc_send_txt &rArr; __2snprintf &rArr; _printf_char_common &rArr; __printf
 </UL>
@@ -1528,12 +1521,12 @@ Global Symbols
 <LI><a href="#[ab]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;strlen
 <LI><a href="#[82]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;__2snprintf
 </UL>
-<BR>[Called By]<UL><LI><a href="#[bf]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSignalFlow_UpdateHmiNoSignal
+<BR>[Called By]<UL><LI><a href="#[bd]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSignalFlow_UpdateHmiNoSignal
 <LI><a href="#[bb]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSignalFlow_SendMeasurement
 <LI><a href="#[b2]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSignalFlow_Process
 </UL>
 
-<P><STRONG><a name="[bd]"></a>tjc_send_wave</STRONG> (Thumb, 160 bytes, Stack size 24 bytes, tjc_usart_hmi.o(.text.tjc_send_wave))
+<P><STRONG><a name="[c0]"></a>tjc_send_wave</STRONG> (Thumb, 160 bytes, Stack size 24 bytes, tjc_usart_hmi.o(.text.tjc_send_wave))
 <BR><BR>[Stack]<UL><LI>Max Depth = 160 + Unknown Stack Size
 <LI>Call Chain = tjc_send_wave &rArr; __2snprintf &rArr; _printf_char_common &rArr; __printf
 </UL>
@@ -1542,10 +1535,8 @@ Global Symbols
 <LI><a href="#[ab]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;strlen
 <LI><a href="#[82]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;__2snprintf
 </UL>
-<BR>[Called By]<UL><LI><a href="#[bf]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSignalFlow_UpdateHmiNoSignal
-<LI><a href="#[ae]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSignalFlow_UpdateHmiWaveform
+<BR>[Called By]<UL><LI><a href="#[ae]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSignalFlow_UpdateHmiWaveform
 <LI><a href="#[b9]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSignalFlow_UpdateHmiSpectrum
-<LI><a href="#[b2]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSignalFlow_Process
 </UL>
 
 <P><STRONG><a name="[ed]"></a>__ARM_fpclassifyf</STRONG> (Thumb, 38 bytes, Stack size 0 bytes, fpclassifyf.o(i.__ARM_fpclassifyf))
@@ -1748,14 +1739,14 @@ Local Symbols
 <BR>[Called By]<UL><LI><a href="#[b2]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSignalFlow_Process
 </UL>
 
-<P><STRONG><a name="[b9]"></a>GSignalFlow_UpdateHmiSpectrum</STRONG> (Thumb, 1936 bytes, Stack size 160 bytes, gsignalflow.o(.text.GSignalFlow_UpdateHmiSpectrum))
-<BR><BR>[Stack]<UL><LI>Max Depth = 408 + Unknown Stack Size
+<P><STRONG><a name="[b9]"></a>GSignalFlow_UpdateHmiSpectrum</STRONG> (Thumb, 2408 bytes, Stack size 152 bytes, gsignalflow.o(.text.GSignalFlow_UpdateHmiSpectrum))
+<BR><BR>[Stack]<UL><LI>Max Depth = 400 + Unknown Stack Size
 <LI>Call Chain = GSignalFlow_UpdateHmiSpectrum &rArr; TjcHmi_GetComponentWidth &rArr; __2snprintf &rArr; _printf_char_common &rArr; __printf
 </UL>
-<BR>[Calls]<UL><LI><a href="#[bd]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;tjc_send_wave
-<LI><a href="#[bc]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;tjc_clear_wave
-<LI><a href="#[b7]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;TjcHmi_GetComponentWidth
+<BR>[Calls]<UL><LI><a href="#[c0]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;tjc_send_wave
+<LI><a href="#[bf]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;TjcHmi_GetComponentWidth
 <LI><a href="#[b6]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;tjc_send_string
+<LI><a href="#[b5]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;tjc_clear_wave
 <LI><a href="#[8b]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;__aeabi_memset4
 </UL>
 <BR>[Called By]<UL><LI><a href="#[b2]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSignalFlow_Process
@@ -1777,8 +1768,8 @@ Local Symbols
 <LI>Call Chain = GSignalFlow_SendMeasurement &rArr; GMeasurement_Convert &rArr; __hardfp_cosf &rArr; __mathlib_rredf2
 </UL>
 <BR>[Calls]<UL><LI><a href="#[a5]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GMeasurement_Convert
-<LI><a href="#[c0]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GMeasurementCalibration_Get
-<LI><a href="#[b5]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;tjc_send_txt
+<LI><a href="#[be]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GMeasurementCalibration_Get
+<LI><a href="#[b7]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;tjc_send_txt
 <LI><a href="#[a8]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSerial_Transmit
 <LI><a href="#[ab]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;strlen
 <LI><a href="#[82]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;__2snprintf
@@ -1790,16 +1781,16 @@ Local Symbols
 <BR><BR>[Stack]<UL><LI>Max Depth = 320 + Unknown Stack Size
 <LI>Call Chain = GSignalFlow_UpdateHmiWaveform &rArr; TjcHmi_GetComponentWidth &rArr; __2snprintf &rArr; _printf_char_common &rArr; __printf
 </UL>
-<BR>[Calls]<UL><LI><a href="#[bd]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;tjc_send_wave
-<LI><a href="#[bc]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;tjc_clear_wave
-<LI><a href="#[b7]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;TjcHmi_GetComponentWidth
+<BR>[Calls]<UL><LI><a href="#[c0]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;tjc_send_wave
+<LI><a href="#[bf]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;TjcHmi_GetComponentWidth
+<LI><a href="#[b5]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;tjc_clear_wave
 <LI><a href="#[8b]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;__aeabi_memset4
 </UL>
 <BR>[Called By]<UL><LI><a href="#[ad]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSignalFlow_BuildAndDisplayWaveform
 <LI><a href="#[b2]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSignalFlow_Process
 </UL>
 
-<P><STRONG><a name="[be]"></a>GSignalFlow_SendNoSignal</STRONG> (Thumb, 80 bytes, Stack size 152 bytes, gsignalflow.o(.text.GSignalFlow_SendNoSignal))
+<P><STRONG><a name="[bc]"></a>GSignalFlow_SendNoSignal</STRONG> (Thumb, 80 bytes, Stack size 152 bytes, gsignalflow.o(.text.GSignalFlow_SendNoSignal))
 <BR><BR>[Stack]<UL><LI>Max Depth = 288 + Unknown Stack Size
 <LI>Call Chain = GSignalFlow_SendNoSignal &rArr; __2snprintf &rArr; _printf_char_common &rArr; __printf
 </UL>
@@ -1810,16 +1801,13 @@ Local Symbols
 <BR>[Called By]<UL><LI><a href="#[b2]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSignalFlow_Process
 </UL>
 
-<P><STRONG><a name="[bf]"></a>GSignalFlow_UpdateHmiNoSignal</STRONG> (Thumb, 376 bytes, Stack size 72 bytes, gsignalflow.o(.text.GSignalFlow_UpdateHmiNoSignal))
-<BR><BR>[Stack]<UL><LI>Max Depth = 320 + Unknown Stack Size
-<LI>Call Chain = GSignalFlow_UpdateHmiNoSignal &rArr; TjcHmi_GetComponentWidth &rArr; __2snprintf &rArr; _printf_char_common &rArr; __printf
+<P><STRONG><a name="[bd]"></a>GSignalFlow_UpdateHmiNoSignal</STRONG> (Thumb, 260 bytes, Stack size 72 bytes, gsignalflow.o(.text.GSignalFlow_UpdateHmiNoSignal))
+<BR><BR>[Stack]<UL><LI>Max Depth = 224 + Unknown Stack Size
+<LI>Call Chain = GSignalFlow_UpdateHmiNoSignal &rArr; tjc_send_txt &rArr; __2snprintf &rArr; _printf_char_common &rArr; __printf
 </UL>
-<BR>[Calls]<UL><LI><a href="#[bd]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;tjc_send_wave
-<LI><a href="#[bc]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;tjc_clear_wave
-<LI><a href="#[b7]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;TjcHmi_GetComponentWidth
+<BR>[Calls]<UL><LI><a href="#[b7]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;tjc_send_txt
 <LI><a href="#[b6]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;tjc_send_string
-<LI><a href="#[b5]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;tjc_send_txt
-<LI><a href="#[8b]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;__aeabi_memset4
+<LI><a href="#[b5]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;tjc_clear_wave
 </UL>
 <BR>[Called By]<UL><LI><a href="#[b2]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSignalFlow_Process
 </UL>

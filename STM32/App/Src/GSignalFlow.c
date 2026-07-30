@@ -68,7 +68,6 @@ static uint16_t s_WaveDisplayPoints;
 static uint8_t s_WaveDisplay[G_FLOW_WAVE_MAX_POINTS];
 static uint16_t s_SpectrumDisplayPoints;
 static uint8_t s_SpectrumDisplay[G_FLOW_SPECTRUM_MAX_POINTS];
-static uint8_t s_SpectrumScreenInitialized;
 
 static void GSignalFlow_SendText(const char *text);
 static void GSignalFlow_SendStartup(void);
@@ -124,7 +123,6 @@ void GSignalFlow_Init(void)
     s_LastCycleEventTick = HAL_GetTick() - G_FLOW_BUTTON_DEBOUNCE_MS;
     s_WaveDisplayPoints = 0U;
     s_SpectrumDisplayPoints = 0U;
-    s_SpectrumScreenInitialized = 0U;
 
     TjcHmi_Init();
 
@@ -152,10 +150,11 @@ void GSignalFlow_Process(void)
             tjc_send_string("ref_star");
             GSignalFlow_UpdateHmiPlaceholders();
             TjcHmi_SetComputeBusy(0U);
-            if (s_SpectrumScreenInitialized == 0U)
-            {
-                (void)GSignalFlow_UpdateHmiSpectrum(0U);
-            }
+            /*
+             * 屏幕启动时间不固定。未测量时只周期清空s1，不发送addt
+             * 原始数据，避免屏幕尚未进入透明传输状态时画出随机杂波。
+             */
+            (void)GSignalFlow_UpdateHmiSpectrum(0U);
             s_NextIdleHmiTextTick = now + G_FLOW_HMI_IDLE_REFRESH_MS;
         }
         return;
@@ -369,6 +368,8 @@ static void GSignalFlow_HandleCommand(void)
         s_ActiveWaveformCycles = s_SelectedWaveformCycles;
         s_CycleChangePending = 0U;
         s_WaveFrameValid = 0U;
+        /* 新一轮开始立即移除上一轮频谱，结果有效后再重新绘制。 */
+        (void)GSignalFlow_UpdateHmiSpectrum(0U);
         s_State = G_FLOW_STATE_WAIT_RESTART;
         s_NextActionTick = now;
         return;
@@ -827,6 +828,17 @@ static uint8_t GSignalFlow_UpdateHmiSpectrum(uint8_t signal_valid)
     uint16_t display_points = s_SpectrumDisplayPoints;
     uint8_t width_ready = 1U;
 
+    if (signal_valid == 0U)
+    {
+        /*
+         * cle是普通ASCII命令，不存在addt透明数据与屏幕启动过程错位的
+         * 风险。启动、无信号和新一轮测量开始时保持频谱窗口完全空白。
+         */
+        tjc_clear_wave("s1.id", 0);
+        tjc_send_string("ref s1");
+        return 1U;
+    }
+
     if (display_points == 0U)
     {
         if (TjcHmi_GetComponentWidth("s1", &display_points) != 0U)
@@ -845,8 +857,7 @@ static uint8_t GSignalFlow_UpdateHmiSpectrum(uint8_t signal_valid)
         display_points = G_FLOW_SPECTRUM_MAX_POINTS;
     }
 
-    if ((signal_valid == 0U) ||
-        (GSignalFlow_BuildQualitativeSpectrum(display_points) == 0U))
+    if (GSignalFlow_BuildQualitativeSpectrum(display_points) == 0U)
     {
         memset(s_SpectrumDisplay,
                G_FLOW_SPECTRUM_VERTICAL_OFFSET,
@@ -865,17 +876,18 @@ static uint8_t GSignalFlow_UpdateHmiSpectrum(uint8_t signal_valid)
                   display_points);
     if (width_ready != 0U)
     {
-        s_SpectrumScreenInitialized = 1U;
         return 1U;
     }
 
-    s_SpectrumScreenInitialized = 0U;
     return 0U;
 }
 
 static uint8_t GSignalFlow_BuildQualitativeSpectrum(uint16_t point_count)
 {
     float maximum_amplitude = 0.0f;
+    float minimum_frequency = (float)G_FLOW_SPECTRUM_MAX_HZ;
+    float maximum_frequency = (float)G_FLOW_SPECTRUM_MIN_HZ;
+    float group_center_frequency;
     uint16_t half_width;
     uint8_t component;
 
@@ -896,9 +908,20 @@ static uint8_t GSignalFlow_BuildQualitativeSpectrum(uint16_t point_count)
 
         if ((peak->frequency_hz >= (float)G_FLOW_SPECTRUM_MIN_HZ) &&
             (peak->frequency_hz <= (float)G_FLOW_SPECTRUM_MAX_HZ) &&
-            (peak->amplitude_codes > maximum_amplitude))
+            (peak->amplitude_codes > 0.0f))
         {
-            maximum_amplitude = peak->amplitude_codes;
+            if (peak->amplitude_codes > maximum_amplitude)
+            {
+                maximum_amplitude = peak->amplitude_codes;
+            }
+            if (peak->frequency_hz < minimum_frequency)
+            {
+                minimum_frequency = peak->frequency_hz;
+            }
+            if (peak->frequency_hz > maximum_frequency)
+            {
+                maximum_frequency = peak->frequency_hz;
+            }
         }
     }
 
@@ -906,6 +929,9 @@ static uint8_t GSignalFlow_BuildQualitativeSpectrum(uint16_t point_count)
     {
         return 0U;
     }
+
+    group_center_frequency =
+        (minimum_frequency + maximum_frequency) * 0.5f;
 
     half_width = (uint16_t)(point_count / 256U);
     if (half_width < 2U)
@@ -919,7 +945,9 @@ static uint8_t GSignalFlow_BuildQualitativeSpectrum(uint16_t point_count)
 
     /*
      * 绘制检测到的最多三个实际分量，谐波次数不限于H1~H3。
-     * 横坐标按10~500kHz线性映射；淘晶驰
+     * 峰组的最低/最高频率中点平移到视窗中心，频率到像素仍使用
+     * 10~500kHz的固定比例尺，所以各峰之间的距离比例完全不变。
+     * 淘晶驰
      * addt数据在当前s1控件上的显示方向与数组索引相反，因此这里
      * 反向写入数组，保证屏幕实际从左到右按频率由低到高排列。
      * 峰高按各谐波幅值相对最强分量线性缩放，因此顺序、间隔和
@@ -932,22 +960,31 @@ static uint8_t GSignalFlow_BuildQualitativeSpectrum(uint16_t point_count)
         const SpectrumComponent *peak = &s_Result.components[component];
 
         if ((peak->frequency_hz >= (float)G_FLOW_SPECTRUM_MIN_HZ) &&
-            (peak->frequency_hz <= (float)G_FLOW_SPECTRUM_MAX_HZ))
+            (peak->frequency_hz <= (float)G_FLOW_SPECTRUM_MAX_HZ) &&
+            (peak->amplitude_codes > 0.0f))
         {
-            uint32_t frequency_hz =
-                GSignalFlow_RoundPositive(peak->frequency_hz);
-            uint16_t center = (uint16_t)(
-                ((G_FLOW_SPECTRUM_MAX_HZ - frequency_hz) *
-                 (uint32_t)(point_count - 1U) +
-                 (G_FLOW_SPECTRUM_MAX_HZ -
-                  G_FLOW_SPECTRUM_MIN_HZ) / 2UL) /
-                (G_FLOW_SPECTRUM_MAX_HZ -
-                 G_FLOW_SPECTRUM_MIN_HZ));
+            float center_position =
+                ((float)(point_count - 1U) * 0.5f) -
+                ((peak->frequency_hz - group_center_frequency) *
+                 (float)(point_count - 1U) /
+                 (float)(G_FLOW_SPECTRUM_MAX_HZ -
+                         G_FLOW_SPECTRUM_MIN_HZ));
+            uint16_t center;
             uint32_t height = GSignalFlow_RoundPositive(
                 (peak->amplitude_codes / maximum_amplitude) *
                 (float)(G_FLOW_SPECTRUM_PEAK_VALUE -
                         G_FLOW_SPECTRUM_VERTICAL_OFFSET));
             int32_t offset;
+
+            if (center_position < 0.0f)
+            {
+                center_position = 0.0f;
+            }
+            else if (center_position > (float)(point_count - 1U))
+            {
+                center_position = (float)(point_count - 1U);
+            }
+            center = (uint16_t)(center_position + 0.5f);
 
             if (height < G_FLOW_SPECTRUM_MIN_PEAK_HEIGHT)
             {
