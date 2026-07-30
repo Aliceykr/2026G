@@ -52,6 +52,7 @@ static int ExpectEvent(const uint8_t *data,
 
 int main(void)
 {
+    uint16_t component_width = 0U;
     static const uint8_t button_one[] =
         {0x55U, 0x01U, 0x00U, 0x00U, 0xFFU, 0xFFU, 0xFFU};
     static const uint8_t button_three[] =
@@ -63,6 +64,8 @@ int main(void)
          0xFFU, 0xFFU, 0xFFU};
     static const uint8_t ascii_one[] = {'1'};
     static const uint8_t ascii_three[] = {'3'};
+    static const uint8_t width_512_response[] =
+        {0x71U, 0x00U, 0x02U, 0x00U, 0x00U, 0xFFU, 0xFFU, 0xFFU};
 
     TjcHmi_Init();
     s_TestTick = 0U;
@@ -96,6 +99,14 @@ int main(void)
         return 1;
     }
 
-    puts("PASS TJC HMI: first b0 frame, header resync, b1 and ASCII compatible");
+    LoadInput(width_512_response, sizeof(width_512_response));
+    if ((TjcHmi_GetComponentWidth("s0", &component_width) == 0U) ||
+        (component_width != 512U))
+    {
+        puts("FAIL TJC HMI component width response");
+        return 1;
+    }
+
+    puts("PASS TJC HMI: buttons, header resync and component width response");
     return 0;
 }

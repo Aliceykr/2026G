@@ -412,6 +412,85 @@ void TjcHmi_SetStatusText(const char *text)
     }
 }
 
+uint8_t TjcHmi_GetComponentWidth(const char *name, uint16_t *width)
+{
+    char command[32];
+    uint8_t payload[4] = {0U, 0U, 0U, 0U};
+    uint8_t payload_index = 0U;
+    uint8_t terminator_count = 0U;
+    uint8_t receiving = 0U;
+    uint32_t deadline;
+    int written;
+
+    if ((name == NULL) || (width == NULL))
+    {
+        return 0U;
+    }
+
+    written = snprintf(command, sizeof(command), "get %s.w", name);
+    if ((written <= 0) || ((size_t)written >= sizeof(command)))
+    {
+        return 0U;
+    }
+
+    tjc_send_string(command);
+    deadline = HAL_GetTick() + 50U;
+
+    while ((int32_t)(HAL_GetTick() - deadline) < 0)
+    {
+        uint8_t byte;
+
+        while (TjcHmi_ReadByte(&byte) != 0U)
+        {
+            if (receiving == 0U)
+            {
+                if (byte == 0x71U)
+                {
+                    receiving = 1U;
+                    payload_index = 0U;
+                    terminator_count = 0U;
+                }
+                continue;
+            }
+
+            if (payload_index < 4U)
+            {
+                payload[payload_index++] = byte;
+                continue;
+            }
+
+            if (byte == 0xFFU)
+            {
+                terminator_count++;
+                if (terminator_count == 3U)
+                {
+                    uint32_t value =
+                        (uint32_t)payload[0] |
+                        ((uint32_t)payload[1] << 8U) |
+                        ((uint32_t)payload[2] << 16U) |
+                        ((uint32_t)payload[3] << 24U);
+
+                    if ((value >= 16UL) && (value <= 1024UL))
+                    {
+                        *width = (uint16_t)value;
+                        return 1U;
+                    }
+                    return 0U;
+                }
+                continue;
+            }
+
+            receiving = (byte == 0x71U) ? 1U : 0U;
+            payload_index = 0U;
+            terminator_count = 0U;
+        }
+
+        HAL_Delay(1U);
+    }
+
+    return 0U;
+}
+
 /**
  * @brief 设置控件的字符串属性。
  * @param objname 控件名，可包含页面前缀，如"page0.b0"。

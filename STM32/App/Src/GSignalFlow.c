@@ -18,11 +18,16 @@
 #define G_FLOW_HMI_MEASUREMENT_FIELDS 9U
 #define G_FLOW_HMI_BUSY_MIN_MS        300U
 #define G_FLOW_CAPTURE_TIMEOUT_MS     2000U
+#define G_FLOW_WAVE_HEIGHT_DIVISOR    3U
+#define G_FLOW_WAVE_VERTICAL_OFFSET   20U
+#define G_FLOW_WAVE_FALLBACK_POINTS   512U
+#define G_FLOW_WAVE_MAX_POINTS        1024U
 
 typedef enum
 {
     G_FLOW_STATE_IDLE = 0,
     G_FLOW_STATE_WAIT_ANALYSIS,
+    G_FLOW_STATE_WAIT_WAVEFORM,
     G_FLOW_STATE_WAIT_RESTART,
     G_FLOW_STATE_HOLD
 } GFlowState;
@@ -30,6 +35,7 @@ typedef enum
 static int16_t s_CaptureFrame[SPECTRUM_FRAME_LENGTH];
 static SpectrumResult s_Result;
 static GMeasurementResult s_Measurement;
+static GMeasurementWaveform s_Waveform;
 static GFlowState s_State;
 static uint32_t s_NextActionTick;
 static uint32_t s_ReportSequence;
@@ -39,11 +45,14 @@ static uint32_t s_AnalysisElapsedMs;
 static uint32_t s_FpgaId;
 static uint32_t s_NextIdleHmiTextTick;
 static uint8_t s_FpgaOnline;
+static uint8_t s_WaveformCycles;
 static uint8_t s_MeasurementEnabled;
 static uint8_t s_HmiMeasurementField;
 static uint8_t s_HmiMeasurementPending;
 static uint8_t s_HmiReadyPending;
 static uint32_t s_HmiBusyUntilTick;
+static uint16_t s_WaveDisplayPoints;
+static uint8_t s_WaveDisplay[G_FLOW_WAVE_MAX_POINTS];
 
 static void GSignalFlow_SendText(const char *text);
 static void GSignalFlow_SendStartup(void);
@@ -62,12 +71,15 @@ static void GSignalFlow_QueueHmiMeasurement(void);
 static void GSignalFlow_ServiceHmiMeasurement(void);
 static void GSignalFlow_UpdateHmiMeasurementField(uint8_t field);
 static void GSignalFlow_UpdateHmiNoSignal(void);
+static void GSignalFlow_UpdateHmiWaveform(void);
 
 void GSignalFlow_Init(void)
 {
     memset(s_CaptureFrame, 0, sizeof(s_CaptureFrame));
     memset(&s_Result, 0, sizeof(s_Result));
     memset(&s_Measurement, 0, sizeof(s_Measurement));
+    memset(&s_Waveform, 0, sizeof(s_Waveform));
+    memset(s_WaveDisplay, 0, sizeof(s_WaveDisplay));
     s_State = G_FLOW_STATE_IDLE;
     s_NextActionTick = HAL_GetTick();
     s_ReportSequence = 0UL;
@@ -76,11 +88,13 @@ void GSignalFlow_Init(void)
     s_AnalysisElapsedMs = 0UL;
     s_FpgaId = 0UL;
     s_NextIdleHmiTextTick = HAL_GetTick();
+    s_WaveformCycles = 1U;
     s_MeasurementEnabled = 0U;
     s_HmiMeasurementField = 0U;
     s_HmiMeasurementPending = 0U;
     s_HmiReadyPending = 0U;
     s_HmiBusyUntilTick = 0UL;
+    s_WaveDisplayPoints = 0U;
 
     TjcHmi_Init();
 
@@ -192,6 +206,33 @@ void GSignalFlow_Process(void)
             GSignalFlow_AbortCycle("measurement", "CALC ERR");
             return;
         }
+
+        if (Fpga_StartCapture(1U) == 0U)
+        {
+            GSignalFlow_AbortCycle("wave_start", "WAVE ERR");
+            return;
+        }
+
+        s_State = G_FLOW_STATE_WAIT_WAVEFORM;
+        s_NextActionTick = HAL_GetTick() + G_FLOW_STATUS_POLL_MS;
+        return;
+    }
+
+    if (s_State == G_FLOW_STATE_WAIT_WAVEFORM)
+    {
+        if (GMeasurement_BuildWaveform(
+                s_CaptureFrame,
+                SPECTRUM_FRAME_LENGTH,
+                G_MEASUREMENT_WAVEFORM_SAMPLE_RATE_HZ,
+                s_Result.fundamental_hz,
+                s_WaveformCycles,
+                &s_Waveform) == 0U)
+        {
+            GSignalFlow_AbortCycle("waveform", "WAVE ERR");
+            return;
+        }
+
+        GSignalFlow_UpdateHmiWaveform();
         GSignalFlow_FinishCycle(HAL_GetTick());
         return;
     }
@@ -224,6 +265,7 @@ static void GSignalFlow_StartOrRetry(uint32_t now)
 
     memset(&s_Result, 0, sizeof(s_Result));
     memset(&s_Measurement, 0, sizeof(s_Measurement));
+    memset(&s_Waveform, 0, sizeof(s_Waveform));
     s_CycleStartTick = now;
     s_State = G_FLOW_STATE_WAIT_ANALYSIS;
     s_NextActionTick = now + G_FLOW_STATUS_POLL_MS;
@@ -275,8 +317,16 @@ static void GSignalFlow_HandleCommand(void)
         return;
     }
 
-    /* 波形显示已停用，b1及ASCII 1/3事件暂不执行任何业务。 */
-    (void)ignored_cycles;
+    if (event == TJC_HMI_EVENT_TOGGLE_CYCLES)
+    {
+        ignored_cycles = (s_WaveformCycles == 1U) ? 3U : 1U;
+    }
+
+    if ((event == TJC_HMI_EVENT_TOGGLE_CYCLES) ||
+        (event == TJC_HMI_EVENT_SET_CYCLES))
+    {
+        (void)GSignalFlow_SetWaveformCycles(ignored_cycles);
+    }
 }
 
 static void GSignalFlow_SendText(const char *text)
@@ -526,7 +576,11 @@ static uint8_t GSignalFlow_SendMeasurement(void)
 
 static void GSignalFlow_QueueHmiMeasurement(void)
 {
-    s_HmiMeasurementField = 0U;
+    /* 三个主要参数先立即显示，确保后续波形采集不会拖住Urms。 */
+    GSignalFlow_UpdateHmiMeasurementField(0U);
+    GSignalFlow_UpdateHmiMeasurementField(1U);
+    GSignalFlow_UpdateHmiMeasurementField(2U);
+    s_HmiMeasurementField = 3U;
     s_HmiMeasurementPending = 1U;
 }
 
@@ -699,6 +753,90 @@ static void GSignalFlow_UpdateHmiNoSignal(void)
     GSignalFlow_UpdateHmiPlaceholders();
 }
 
+static void GSignalFlow_UpdateHmiWaveform(void)
+{
+    int32_t minimum;
+    int32_t range;
+    uint16_t point;
+    uint16_t display_points = s_WaveDisplayPoints;
+
+    if ((s_Waveform.valid == 0U) ||
+        (s_Waveform.point_count != G_MEASUREMENT_WAVEFORM_POINTS))
+    {
+        return;
+    }
+
+    minimum = (int32_t)s_Waveform.minimum_code;
+    range = (int32_t)s_Waveform.maximum_code - minimum;
+
+    if (display_points == 0U)
+    {
+        if (TjcHmi_GetComponentWidth("s0", &display_points) != 0U)
+        {
+            s_WaveDisplayPoints = display_points;
+        }
+        else
+        {
+            display_points = G_FLOW_WAVE_FALLBACK_POINTS;
+        }
+    }
+    if (display_points > G_FLOW_WAVE_MAX_POINTS)
+    {
+        display_points = G_FLOW_WAVE_MAX_POINTS;
+    }
+
+    for (point = 0U; point < display_points; point++)
+    {
+        uint32_t source_numerator =
+            (uint32_t)point *
+            (uint32_t)(s_Waveform.point_count - 1U);
+        uint16_t source_index = (uint16_t)(
+            source_numerator / (display_points - 1U));
+        uint32_t source_remainder =
+            source_numerator % (display_points - 1U);
+        uint16_t next_index =
+            (source_index + 1U < s_Waveform.point_count)
+            ? (uint16_t)(source_index + 1U)
+            : source_index;
+        int32_t interpolated =
+            ((int32_t)s_Waveform.points[source_index] *
+             (int32_t)((display_points - 1U) -
+                       source_remainder) +
+             (int32_t)s_Waveform.points[next_index] *
+             (int32_t)source_remainder) /
+            (int32_t)(display_points - 1U);
+
+        if (range <= 0)
+        {
+            s_WaveDisplay[point] = G_FLOW_WAVE_VERTICAL_OFFSET;
+        }
+        else
+        {
+            int32_t centered = interpolated - minimum;
+            int32_t original_height = (centered * 254) / range;
+            int32_t scaled = original_height /
+                             (int32_t)G_FLOW_WAVE_HEIGHT_DIVISOR +
+                             (int32_t)G_FLOW_WAVE_VERTICAL_OFFSET;
+
+            if (scaled < 0)
+            {
+                scaled = 0;
+            }
+            if (scaled > 254)
+            {
+                scaled = 254;
+            }
+            s_WaveDisplay[point] = (uint8_t)scaled;
+        }
+    }
+
+    tjc_clear_wave("s0.id", 0);
+    tjc_send_wave("s0.id",
+                  0,
+                  s_WaveDisplay,
+                  display_points);
+}
+
 static uint32_t GSignalFlow_RoundPositive(float value)
 {
     if (value <= 0.0f)
@@ -717,4 +855,20 @@ static uint32_t GSignalFlow_RoundPositive(float value)
 const GMeasurementResult *GSignalFlow_GetLatestMeasurement(void)
 {
     return &s_Measurement;
+}
+
+uint8_t GSignalFlow_SetWaveformCycles(uint8_t cycles)
+{
+    if ((cycles != 1U) && (cycles != 3U))
+    {
+        return 0U;
+    }
+
+    s_WaveformCycles = cycles;
+    return 1U;
+}
+
+const GMeasurementWaveform *GSignalFlow_GetLatestWaveform(void)
+{
+    return &s_Waveform;
 }
