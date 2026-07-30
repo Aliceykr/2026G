@@ -71,14 +71,6 @@ int main(void)
     static const uint8_t button_during_get[] =
         {0x55U, 0x02U, 0x00U, 0x00U, 0xFFU, 0xFFU, 0xFFU,
          0x71U, 0x00U, 0x02U, 0x00U, 0x00U, 0xFFU, 0xFFU, 0xFFU};
-    static const uint8_t spectrum_geometry_responses[] =
-        {
-            0x71U, 0x64U, 0x00U, 0x00U, 0x00U, 0xFFU, 0xFFU, 0xFFU,
-            0x71U, 0x32U, 0x00U, 0x00U, 0x00U, 0xFFU, 0xFFU, 0xFFU,
-            0x71U, 0x00U, 0x02U, 0x00U, 0x00U, 0xFFU, 0xFFU, 0xFFU,
-            0x71U, 0x78U, 0x00U, 0x00U, 0x00U, 0xFFU, 0xFFU, 0xFFU,
-            0x71U, 0x00U, 0x00U, 0x00U, 0x00U, 0xFFU, 0xFFU, 0xFFU
-        };
 
     TjcHmi_Init();
     s_TestTick = 0U;
@@ -130,15 +122,6 @@ int main(void)
         return 1;
     }
 
-    LoadInput(spectrum_geometry_responses,
-              sizeof(spectrum_geometry_responses));
-    if ((TjcHmi_DrawSpectrumPeakLabel(0U, 1U, 0U) != 0U) ||
-        (TjcHmi_DrawSpectrumPeakLabel(10000000U, 1U, 0U) == 0U))
-    {
-        puts("FAIL TJC HMI spectrum peak label/DC rejection");
-        return 1;
-    }
-
-    puts("PASS TJC HMI: buttons, deferred get and Hn/Hz peak labels");
+    puts("PASS TJC HMI: buttons and deferred component queries");
     return 0;
 }

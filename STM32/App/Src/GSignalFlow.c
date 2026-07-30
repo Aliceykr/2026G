@@ -15,21 +15,21 @@
 #define G_FLOW_RESPONSE_LIMIT_MS    2000U
 #define G_FLOW_ASCII_DEBUG_ENABLED   1U
 #define G_FLOW_HMI_IDLE_REFRESH_MS  2000U
-#define G_FLOW_HMI_MEASUREMENT_FIELDS 9U
+#define G_FLOW_HMI_MEASUREMENT_FIELDS 6U
 #define G_FLOW_HMI_BUSY_MIN_MS        300U
 #define G_FLOW_CAPTURE_TIMEOUT_MS     2000U
 #define G_FLOW_WAVE_HEIGHT_DIVISOR    3U
 #define G_FLOW_WAVE_VERTICAL_OFFSET   20U
 #define G_FLOW_WAVE_FALLBACK_POINTS   512U
 #define G_FLOW_WAVE_MAX_POINTS        1024U
-#define G_FLOW_SPECTRUM_HEIGHT_DIVISOR 3U
 #define G_FLOW_SPECTRUM_VERTICAL_OFFSET 42U
+#define G_FLOW_SPECTRUM_PEAK_VALUE      127U
+#define G_FLOW_SPECTRUM_MIN_PEAK_HEIGHT 3U
 #define G_FLOW_SPECTRUM_FALLBACK_POINTS 512U
 #define G_FLOW_SPECTRUM_MAX_POINTS    1024U
-#define G_FLOW_SPECTRUM_NOISE_THRESHOLD 72U
-#define G_FLOW_SPECTRUM_NEIGHBOR_THRESHOLD 48U
 #define G_FLOW_SPECTRUM_MIN_HZ        10000UL
 #define G_FLOW_SPECTRUM_MAX_HZ        500000UL
+#define G_FLOW_SPECTRUM_MAX_HARMONIC  3U
 #define G_FLOW_BUTTON_DEBOUNCE_MS     120U
 
 typedef enum
@@ -69,7 +69,6 @@ static uint16_t s_WaveDisplayPoints;
 static uint8_t s_WaveDisplay[G_FLOW_WAVE_MAX_POINTS];
 static uint16_t s_SpectrumDisplayPoints;
 static uint8_t s_SpectrumDisplay[G_FLOW_SPECTRUM_MAX_POINTS];
-static uint8_t s_SpectrumFiltered[G_FLOW_SPECTRUM_MAX_POINTS];
 static uint8_t s_SpectrumScreenInitialized;
 
 static void GSignalFlow_SendText(const char *text);
@@ -93,8 +92,8 @@ static void GSignalFlow_ServiceHmiMeasurement(void);
 static void GSignalFlow_UpdateHmiMeasurementField(uint8_t field);
 static void GSignalFlow_UpdateHmiNoSignal(void);
 static uint8_t GSignalFlow_UpdateHmiSpectrum(uint8_t signal_valid);
-static uint8_t GSignalFlow_IsKnownSpectrumPoint(uint16_t point,
-                                                uint16_t point_count);
+static uint8_t GSignalFlow_BuildQualitativeSpectrum(uint16_t point_count);
+static const SpectrumComponent *GSignalFlow_FindHarmonic(uint8_t harmonic);
 static void GSignalFlow_UpdateHmiWaveform(void);
 static uint8_t GSignalFlow_BuildAndDisplayWaveform(uint8_t cycles);
 
@@ -106,7 +105,6 @@ void GSignalFlow_Init(void)
     memset(&s_Waveform, 0, sizeof(s_Waveform));
     memset(s_WaveDisplay, 0, sizeof(s_WaveDisplay));
     memset(s_SpectrumDisplay, 0, sizeof(s_SpectrumDisplay));
-    memset(s_SpectrumFiltered, 0, sizeof(s_SpectrumFiltered));
     s_State = G_FLOW_STATE_IDLE;
     s_NextActionTick = HAL_GetTick();
     s_ReportSequence = 0UL;
@@ -731,14 +729,12 @@ static void GSignalFlow_UpdateHmiMeasurementField(uint8_t field)
 
     if (field == 0U)
     {
-        GSignalFlow_FormatFixed2(s_Measurement.fundamental_hz,
-                                 value_text,
-                                 sizeof(value_text));
         (void)snprintf(text,
                        sizeof(text),
-                       "f0=%s Hz",
-                       value_text);
-        tjc_send_txt("g0", "txt", text);
+                       "F=%luHZ",
+                       (unsigned long)GSignalFlow_RoundPositive(
+                           s_Measurement.fundamental_hz));
+        tjc_send_txt("t0", "txt", text);
         return;
     }
     if (field == 1U)
@@ -750,7 +746,7 @@ static void GSignalFlow_UpdateHmiMeasurementField(uint8_t field)
                        sizeof(text),
                        "Vpp=%s mV",
                        value_text);
-        tjc_send_txt("g1", "txt", text);
+        tjc_send_txt("t1", "txt", text);
         return;
     }
     if (field == 2U)
@@ -760,56 +756,19 @@ static void GSignalFlow_UpdateHmiMeasurementField(uint8_t field)
                                  sizeof(value_text));
         (void)snprintf(text,
                        sizeof(text),
-                       "Urms=%s mV",
+                       "Vrms=%s mV",
                        value_text);
-        tjc_send_txt("g2", "txt", text);
+        tjc_send_txt("t2", "txt", text);
         return;
     }
 
     if (field <= 5U)
     {
-        component = (uint8_t)(field - 3U);
-        object_name = (field == 3U) ? "g3" :
-                      ((field == 4U) ? "g4" : "g5");
-
-        if (component < s_Measurement.component_count)
-        {
-            const GMeasurementComponent *item =
-                &s_Measurement.components[component];
-            char frequency_text[24];
-            char amplitude_text[24];
-
-            GSignalFlow_FormatFixed2(item->frequency_hz,
-                                     frequency_text,
-                                     sizeof(frequency_text));
-            GSignalFlow_FormatFixed2(item->amplitude_mv,
-                                     amplitude_text,
-                                     sizeof(amplitude_text));
-            (void)snprintf(text,
-                           sizeof(text),
-                           "C%u=H%u,%s Hz,%s mV",
-                           (unsigned int)(component + 1U),
-                           (unsigned int)item->harmonic,
-                           frequency_text,
-                           amplitude_text);
-        }
-        else
-        {
-            (void)snprintf(text,
-                           sizeof(text),
-                           "C%u=XXX",
-                           (unsigned int)(component + 1U));
-        }
-        tjc_send_txt(object_name, "txt", text);
-        return;
-    }
-
-    if (field < G_FLOW_HMI_MEASUREMENT_FIELDS)
-    {
-        uint8_t harmonic = (uint8_t)(field - 5U);
+        uint8_t harmonic = (uint8_t)(field - 2U);
         const GMeasurementComponent *matched = NULL;
-        char harmonic_object[3] =
-            {'g', (char)('5' + harmonic), '\0'};
+
+        object_name = (field == 3U) ? "t3" :
+                      ((field == 4U) ? "t4" : "t5");
 
         for (component = 0U;
              component < s_Measurement.component_count;
@@ -829,50 +788,40 @@ static void GSignalFlow_UpdateHmiMeasurementField(uint8_t field)
                                      sizeof(value_text));
             (void)snprintf(text,
                            sizeof(text),
-                           "H%u=%s mV",
+                           "H%u=%luHZ,%smV",
                            (unsigned int)harmonic,
+                           (unsigned long)GSignalFlow_RoundPositive(
+                               matched->frequency_hz),
                            value_text);
         }
         else
         {
             (void)snprintf(text,
                            sizeof(text),
-                           "H%u=XXX mV",
+                           "H%u=XXXHZ,XXX.XXmV",
                            (unsigned int)harmonic);
         }
-        tjc_send_txt(harmonic_object, "txt", text);
+        tjc_send_txt(object_name, "txt", text);
+        return;
     }
 }
 
 static void GSignalFlow_UpdateHmiPlaceholders(void)
 {
     uint8_t field;
-    uint8_t harmonic;
 
-    tjc_send_txt("g0", "txt", "f0=XXX Hz");
-    tjc_send_txt("g1", "txt", "Vpp=XXX mV");
-    tjc_send_txt("g2", "txt", "Urms=XXX mV");
+    tjc_send_txt("t0", "txt", "F=XXXHZ");
+    tjc_send_txt("t1", "txt", "Vpp=XXX mV");
+    tjc_send_txt("t2", "txt", "Vrms=XXX mV");
     for (field = 3U; field <= 5U; field++)
     {
-        char object_name[3] = {'g', (char)('0' + field), '\0'};
-        char text[12];
+        char object_name[3] = {'t', (char)('0' + field), '\0'};
+        char text[28];
 
         (void)snprintf(text,
                        sizeof(text),
-                       "C%u=XXX",
+                       "H%u=XXXHZ,XXX.XXmV",
                        (unsigned int)(field - 2U));
-        tjc_send_txt(object_name, "txt", text);
-    }
-    for (harmonic = 1U; harmonic <= 3U; harmonic++)
-    {
-        char object_name[3] =
-            {'g', (char)('5' + harmonic), '\0'};
-        char text[20];
-
-        (void)snprintf(text,
-                       sizeof(text),
-                       "H%u=XXX mV",
-                       (unsigned int)harmonic);
         tjc_send_txt(object_name, "txt", text);
     }
 }
@@ -886,8 +835,6 @@ static void GSignalFlow_UpdateHmiNoSignal(void)
 
 static uint8_t GSignalFlow_UpdateHmiSpectrum(uint8_t signal_valid)
 {
-    uint16_t point;
-    uint8_t component;
     uint16_t display_points = s_SpectrumDisplayPoints;
     uint8_t width_ready = 1U;
 
@@ -910,89 +857,23 @@ static uint8_t GSignalFlow_UpdateHmiSpectrum(uint8_t signal_valid)
     }
 
     if ((signal_valid == 0U) ||
-        (SpectrumAnalyzer_BuildDisplay(s_SpectrumDisplay,
-                                       display_points) == 0U))
+        (GSignalFlow_BuildQualitativeSpectrum(display_points) == 0U))
     {
         memset(s_SpectrumDisplay,
                G_FLOW_SPECTRUM_VERTICAL_OFFSET,
                display_points);
     }
-    else
-    {
-        /*
-         * BuildDisplay按10kHz->500kHz的FFT bin递增顺序输出。
-         * 峰值高度压缩为原来的1/3，基线为上一版半高值的1/3。
-         * 最大值池化会放大随机单点噪声，因此压低底噪并剔除
-         * 两侧都没有能量支撑的孤立毛刺；已识别峰值保持原高度。
-         */
-        for (point = 0U; point < display_points; point++)
-        {
-            uint16_t left = (point > 0U)
-                ? s_SpectrumDisplay[point - 1U] : 0U;
-            uint16_t center = s_SpectrumDisplay[point];
-            uint16_t right = (point + 1U < display_points)
-                ? s_SpectrumDisplay[point + 1U] : 0U;
-            uint16_t filtered = 0U;
 
-            if (center >= G_FLOW_SPECTRUM_NOISE_THRESHOLD)
-            {
-                if (GSignalFlow_IsKnownSpectrumPoint(
-                        point, display_points) != 0U)
-                {
-                    filtered = center;
-                }
-                else if ((left >= G_FLOW_SPECTRUM_NEIGHBOR_THRESHOLD) ||
-                         (right >= G_FLOW_SPECTRUM_NEIGHBOR_THRESHOLD))
-                {
-                    filtered = (uint16_t)(
-                        (left + 2U * center + right + 2U) / 4U);
-                    if (filtered < G_FLOW_SPECTRUM_NOISE_THRESHOLD)
-                    {
-                        filtered = 0U;
-                    }
-                }
-            }
-
-            s_SpectrumFiltered[point] = (uint8_t)filtered;
-        }
-
-        for (point = 0U; point < display_points; point++)
-        {
-            s_SpectrumDisplay[point] = (uint8_t)(
-                s_SpectrumFiltered[point] /
-                G_FLOW_SPECTRUM_HEIGHT_DIVISOR +
-                G_FLOW_SPECTRUM_VERTICAL_OFFSET);
-        }
-    }
-
+    /*
+     * ref s1先重绘波形控件背景，清除旧版本用xstr画出的H1/H2/H3文字；
+     * 新版本不再在频谱区域绘制任何文字标注。
+     */
+    tjc_send_string("ref s1");
     tjc_clear_wave("s1.id", 0);
     tjc_send_wave("s1.id",
                   0,
                   s_SpectrumDisplay,
                   display_points);
-
-    if ((signal_valid != 0U) &&
-        (s_Result.valid != 0U))
-    {
-        for (component = 0U;
-             component < s_Result.component_count;
-             component++)
-        {
-            const SpectrumComponent *peak =
-                &s_Result.components[component];
-            uint32_t frequency_hundredths_hz =
-                GSignalFlow_RoundPositive(
-                    peak->frequency_hz * 100.0f);
-
-            if (frequency_hundredths_hz >= 1000000UL)
-            {
-                (void)TjcHmi_DrawSpectrumPeakLabel(
-                    frequency_hundredths_hz,
-                    peak->harmonic,
-                    component);
-            }
-        }
-    }
     if (width_ready != 0U)
     {
         s_SpectrumScreenInitialized = 1U;
@@ -1003,72 +884,146 @@ static uint8_t GSignalFlow_UpdateHmiSpectrum(uint8_t signal_valid)
     return 0U;
 }
 
-static uint8_t GSignalFlow_IsKnownSpectrumPoint(uint16_t point,
-                                                uint16_t point_count)
+static const SpectrumComponent *GSignalFlow_FindHarmonic(uint8_t harmonic)
 {
     uint8_t component;
 
-    if ((point_count < 2U) || (s_Result.valid == 0U))
+    if (s_Result.valid == 0U)
     {
-        return 0U;
+        return NULL;
     }
 
     for (component = 0U;
          component < s_Result.component_count;
          component++)
     {
-        uint32_t frequency_hz = GSignalFlow_RoundPositive(
-            s_Result.components[component].frequency_hz);
-
-        if ((frequency_hz >= G_FLOW_SPECTRUM_MIN_HZ) &&
-            (frequency_hz <= G_FLOW_SPECTRUM_MAX_HZ))
+        if (s_Result.components[component].harmonic == harmonic)
         {
-            uint32_t expected =
-                ((frequency_hz - G_FLOW_SPECTRUM_MIN_HZ) *
-                 (uint32_t)(point_count - 1U) +
-                 (G_FLOW_SPECTRUM_MAX_HZ -
-                  G_FLOW_SPECTRUM_MIN_HZ) / 2UL) /
-                (G_FLOW_SPECTRUM_MAX_HZ -
-                 G_FLOW_SPECTRUM_MIN_HZ);
-            uint32_t distance = (point > expected)
-                ? (uint32_t)point - expected
-                : expected - (uint32_t)point;
-
-            if (distance <= 2UL)
-            {
-                return 1U;
-            }
+            return &s_Result.components[component];
         }
     }
 
-    /* 保留分析器确认的最强非谐波峰，但不绘制Hn标签。 */
-    if (s_Result.spur_valid != 0U)
+    return NULL;
+}
+
+static uint8_t GSignalFlow_BuildQualitativeSpectrum(uint16_t point_count)
+{
+    float maximum_amplitude = 0.0f;
+    uint16_t half_width;
+    uint8_t harmonic;
+
+    if ((point_count < 2U) || (s_Result.valid == 0U))
     {
-        uint32_t frequency_hz = GSignalFlow_RoundPositive(
-            s_Result.spur_frequency_hz);
+        return 0U;
+    }
 
-        if ((frequency_hz >= G_FLOW_SPECTRUM_MIN_HZ) &&
-            (frequency_hz <= G_FLOW_SPECTRUM_MAX_HZ))
+    memset(s_SpectrumDisplay,
+           G_FLOW_SPECTRUM_VERTICAL_OFFSET,
+           point_count);
+
+    for (harmonic = 1U;
+         harmonic <= G_FLOW_SPECTRUM_MAX_HARMONIC;
+         harmonic++)
+    {
+        const SpectrumComponent *peak =
+            GSignalFlow_FindHarmonic(harmonic);
+
+        if ((peak != NULL) &&
+            (peak->frequency_hz >= (float)G_FLOW_SPECTRUM_MIN_HZ) &&
+            (peak->frequency_hz <= (float)G_FLOW_SPECTRUM_MAX_HZ) &&
+            (peak->amplitude_codes > maximum_amplitude))
         {
-            uint32_t expected =
-                ((frequency_hz - G_FLOW_SPECTRUM_MIN_HZ) *
+            maximum_amplitude = peak->amplitude_codes;
+        }
+    }
+
+    if (maximum_amplitude <= 0.0f)
+    {
+        return 0U;
+    }
+
+    half_width = (uint16_t)(point_count / 256U);
+    if (half_width < 2U)
+    {
+        half_width = 2U;
+    }
+    else if (half_width > 4U)
+    {
+        half_width = 4U;
+    }
+
+    /*
+     * 仅绘制识别出的H1~H3。横坐标按10~500kHz线性映射；淘晶驰
+     * addt数据在当前s1控件上的显示方向与数组索引相反，因此这里
+     * 反向写入数组，保证屏幕实际从左到右严格为H1、H2、H3。
+     * 峰高按各谐波幅值相对最强分量线性缩放，因此顺序、间隔和
+     * 高度关系都保持定性比例，同时不会混入FFT底噪和非谐波毛刺。
+     */
+    for (harmonic = 1U;
+         harmonic <= G_FLOW_SPECTRUM_MAX_HARMONIC;
+         harmonic++)
+    {
+        const SpectrumComponent *peak =
+            GSignalFlow_FindHarmonic(harmonic);
+
+        if ((peak != NULL) &&
+            (peak->frequency_hz >= (float)G_FLOW_SPECTRUM_MIN_HZ) &&
+            (peak->frequency_hz <= (float)G_FLOW_SPECTRUM_MAX_HZ))
+        {
+            uint32_t frequency_hz =
+                GSignalFlow_RoundPositive(peak->frequency_hz);
+            uint16_t center = (uint16_t)(
+                ((G_FLOW_SPECTRUM_MAX_HZ - frequency_hz) *
                  (uint32_t)(point_count - 1U) +
                  (G_FLOW_SPECTRUM_MAX_HZ -
                   G_FLOW_SPECTRUM_MIN_HZ) / 2UL) /
                 (G_FLOW_SPECTRUM_MAX_HZ -
-                 G_FLOW_SPECTRUM_MIN_HZ);
-            uint32_t distance = (point > expected)
-                ? (uint32_t)point - expected
-                : expected - (uint32_t)point;
+                 G_FLOW_SPECTRUM_MIN_HZ));
+            uint32_t height = GSignalFlow_RoundPositive(
+                (peak->amplitude_codes / maximum_amplitude) *
+                (float)(G_FLOW_SPECTRUM_PEAK_VALUE -
+                        G_FLOW_SPECTRUM_VERTICAL_OFFSET));
+            int32_t offset;
 
-            if (distance <= 2UL)
+            if (height < G_FLOW_SPECTRUM_MIN_PEAK_HEIGHT)
             {
-                return 1U;
+                height = G_FLOW_SPECTRUM_MIN_PEAK_HEIGHT;
+            }
+            if (height > (G_FLOW_SPECTRUM_PEAK_VALUE -
+                          G_FLOW_SPECTRUM_VERTICAL_OFFSET))
+            {
+                height = G_FLOW_SPECTRUM_PEAK_VALUE -
+                         G_FLOW_SPECTRUM_VERTICAL_OFFSET;
+            }
+
+            for (offset = -(int32_t)half_width;
+                 offset <= (int32_t)half_width;
+                 offset++)
+            {
+                int32_t index = (int32_t)center + offset;
+
+                if ((index >= 0) && (index < (int32_t)point_count))
+                {
+                    uint32_t distance = (offset < 0)
+                        ? (uint32_t)(-offset) : (uint32_t)offset;
+                    uint32_t local_height =
+                        (height *
+                         ((uint32_t)half_width + 1UL - distance) +
+                         (uint32_t)half_width / 2UL) /
+                        ((uint32_t)half_width + 1UL);
+                    uint32_t value =
+                        G_FLOW_SPECTRUM_VERTICAL_OFFSET + local_height;
+
+                    if (value > s_SpectrumDisplay[index])
+                    {
+                        s_SpectrumDisplay[index] = (uint8_t)value;
+                    }
+                }
             }
         }
     }
 
-    return 0U;
+    return 1U;
 }
 
 static uint8_t GSignalFlow_BuildAndDisplayWaveform(uint8_t cycles)

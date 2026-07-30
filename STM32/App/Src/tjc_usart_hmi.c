@@ -59,12 +59,6 @@
 #define TJC_ADDT_READY_DELAY_MS         10U
 #define TJC_COMMAND_GAP_MS              2U
 #define TJC_NUMERIC_RESPONSE_TIMEOUT_MS 50U
-#define TJC_SPECTRUM_AXIS_COLOR         65535UL
-#define TJC_SPECTRUM_BASELINE_VALUE     42UL
-#define TJC_WAVEFORM_MAX_VALUE          254UL
-#define TJC_SPECTRUM_MIN_FREQUENCY_HZ   10000UL
-#define TJC_SPECTRUM_MAX_FREQUENCY_HZ   500000UL
-#define TJC_SPECTRUM_PEAK_LABEL_HEIGHT  13UL
 
 /*
  * 串口屏工程使用GB2312编码，不能直接依赖C源文件的UTF-8中文编码。
@@ -93,12 +87,6 @@ static uint32_t s_NextStartLabelTick; /**< 下一次刷新静态文字的时刻�
 static volatile uint32_t s_RxErrorCount; /**< ORE/NE/FE/PE错误计数。 */
 static TjcHmiEvent s_PendingEvent; /**< get查询期间收到的按键事件。 */
 static uint8_t s_PendingCycles;    /**< 延迟事件携带的周期参数。 */
-static uint8_t s_SpectrumGeometryReady; /**< s1坐标已成功缓存。 */
-static uint16_t s_SpectrumX;
-static uint16_t s_SpectrumY;
-static uint16_t s_SpectrumWidth;
-static uint16_t s_SpectrumHeight;
-static uint16_t s_SpectrumBackground;
 
 /* 通用淘晶驰命令格式化缓冲区。所有调用都位于主循环，故不需要加锁。 */
 char str1[TJC_TEXT_BUFFER_LENGTH];
@@ -352,12 +340,6 @@ void TjcHmi_Init(void)
     s_RxErrorCount = 0UL;
     s_PendingEvent = TJC_HMI_EVENT_NONE;
     s_PendingCycles = 0U;
-    s_SpectrumGeometryReady = 0U;
-    s_SpectrumX = 0U;
-    s_SpectrumY = 0U;
-    s_SpectrumWidth = 0U;
-    s_SpectrumHeight = 0U;
-    s_SpectrumBackground = 0U;
     initRingBuffer();
     TjcHmi_UartInit();
     /* 从旧固件热更新时，先解除屏幕可能保留的暂停刷新状态。 */
@@ -453,7 +435,7 @@ void TjcHmi_SetStatusText(const char *text)
 {
     if (text != NULL)
     {
-        tjc_send_txt("g9", "txt", text);
+        tjc_send_txt("t6", "txt", text);
     }
 }
 
@@ -567,127 +549,6 @@ uint8_t TjcHmi_GetComponentWidth(const char *name, uint16_t *width)
     }
 
     *width = (uint16_t)value;
-    return 1U;
-}
-
-static uint8_t TjcHmi_EnsureSpectrumGeometry(void)
-{
-    uint32_t x;
-    uint32_t y;
-    uint32_t width;
-    uint32_t height;
-    uint32_t background = 0UL;
-
-    if (s_SpectrumGeometryReady != 0U)
-    {
-        return 1U;
-    }
-
-    if ((TjcHmi_GetNumericValue("s1.x", &x) == 0U) ||
-        (TjcHmi_GetNumericValue("s1.y", &y) == 0U) ||
-        (TjcHmi_GetNumericValue("s1.w", &width) == 0U) ||
-        (TjcHmi_GetNumericValue("s1.h", &height) == 0U) ||
-        (x > 65535UL) || (y > 65535UL) ||
-        (width < 16UL) || (width > 1024UL) ||
-        (height < 8UL) || (height > 1024UL) ||
-        (x + width > 65536UL) || (y + height > 65536UL))
-    {
-        return 0U;
-    }
-
-    (void)TjcHmi_GetNumericValue("s1.bco", &background);
-    s_SpectrumX = (uint16_t)x;
-    s_SpectrumY = (uint16_t)y;
-    s_SpectrumWidth = (uint16_t)width;
-    s_SpectrumHeight = (uint16_t)height;
-    s_SpectrumBackground = (uint16_t)(background & 0xFFFFUL);
-    s_SpectrumGeometryReady = 1U;
-    return 1U;
-}
-
-uint8_t TjcHmi_DrawSpectrumPeakLabel(uint32_t frequency_hundredths_hz,
-                                    uint8_t harmonic,
-                                    uint8_t row)
-{
-    uint32_t frequency_hz =
-        (frequency_hundredths_hz + 50UL) / 100UL;
-    uint32_t axis_y;
-    uint32_t peak_x;
-    uint32_t label_x;
-    uint32_t label_y;
-    uint32_t label_width = 112UL;
-    char label[24];
-
-    /* DC和10kHz以下的分量不属于本频谱显示范围。 */
-    if ((harmonic == 0U) ||
-        (frequency_hz < TJC_SPECTRUM_MIN_FREQUENCY_HZ) ||
-        (frequency_hz > TJC_SPECTRUM_MAX_FREQUENCY_HZ))
-    {
-        return 0U;
-    }
-    if (TjcHmi_EnsureSpectrumGeometry() == 0U)
-    {
-        return 0U;
-    }
-
-    axis_y = (uint32_t)s_SpectrumY +
-             (uint32_t)s_SpectrumHeight - 1UL -
-             (TJC_SPECTRUM_BASELINE_VALUE *
-              (uint32_t)(s_SpectrumHeight - 1U) +
-              TJC_WAVEFORM_MAX_VALUE / 2UL) /
-             TJC_WAVEFORM_MAX_VALUE;
-    peak_x = (uint32_t)s_SpectrumX +
-        ((frequency_hz - TJC_SPECTRUM_MIN_FREQUENCY_HZ) *
-         (uint32_t)(s_SpectrumWidth - 1U) +
-         (TJC_SPECTRUM_MAX_FREQUENCY_HZ -
-          TJC_SPECTRUM_MIN_FREQUENCY_HZ) / 2UL) /
-        (TJC_SPECTRUM_MAX_FREQUENCY_HZ -
-         TJC_SPECTRUM_MIN_FREQUENCY_HZ);
-
-    if (label_width > (uint32_t)s_SpectrumWidth)
-    {
-        label_width = (uint32_t)s_SpectrumWidth;
-    }
-    if (peak_x < (uint32_t)s_SpectrumX + label_width / 2UL)
-    {
-        label_x = (uint32_t)s_SpectrumX;
-    }
-    else if (peak_x + label_width / 2UL >
-             (uint32_t)s_SpectrumX + (uint32_t)s_SpectrumWidth)
-    {
-        label_x = (uint32_t)s_SpectrumX +
-                  (uint32_t)s_SpectrumWidth - label_width;
-    }
-    else
-    {
-        label_x = peak_x - label_width / 2UL;
-    }
-
-    label_y = axis_y - TJC_SPECTRUM_PEAK_LABEL_HEIGHT - 2UL -
-              (uint32_t)(row % 3U) *
-              (TJC_SPECTRUM_PEAK_LABEL_HEIGHT + 1UL);
-    if (label_y < (uint32_t)s_SpectrumY)
-    {
-        label_y = (uint32_t)s_SpectrumY;
-    }
-
-    (void)snprintf(label,
-                   sizeof(label),
-                   "H%u %lu.%02luHZ",
-                   (unsigned int)harmonic,
-                   (unsigned long)(frequency_hundredths_hz / 100UL),
-                   (unsigned long)(frequency_hundredths_hz % 100UL));
-    (void)snprintf(str1,
-                   sizeof(str1),
-                   "xstr %lu,%lu,%lu,%lu,0,%lu,%u,1,1,1,\"%s\"",
-                   (unsigned long)label_x,
-                   (unsigned long)label_y,
-                   (unsigned long)label_width,
-                   (unsigned long)TJC_SPECTRUM_PEAK_LABEL_HEIGHT,
-                   (unsigned long)TJC_SPECTRUM_AXIS_COLOR,
-                   (unsigned int)s_SpectrumBackground,
-                   label);
-    tjc_send_string(str1);
     return 1U;
 }
 
@@ -875,7 +736,7 @@ void TJC_UART_IRQHandler(void)
 }
 
 /**
- * @brief 兼容页面：向page0.gN写入“整数.两位小数 名称”文本。
+ * @brief 兼容页面：向page0.tN写入“整数.两位小数 名称”文本。
  * @param uart_handle 旧接口遗留参数，当前忽略，始终使用模块私有UART4。
  * @param counter 文本控件编号N。
  * @param num1 小数点前数字。
@@ -888,7 +749,10 @@ void printf_txt(UART_HandleTypeDef *uart_handle,
                 int num2,
                 const char *name)
 {
-    int written;
+    char object_name[16];
+    char text[64];
+    int object_written;
+    int text_written;
 
     (void)uart_handle;
     if (name == NULL)
@@ -896,16 +760,22 @@ void printf_txt(UART_HandleTypeDef *uart_handle,
         return;
     }
 
-    written = snprintf(str1,
-                       sizeof(str1),
-                       "page0.g%d.txt=\"%d.%02d %s\"",
-                       counter,
-                       num1,
-                       num2,
-                       name);
-    if ((written > 0) && ((size_t)written < sizeof(str1)))
+    object_written = snprintf(object_name,
+                              sizeof(object_name),
+                              "page0.t%d",
+                              counter);
+    text_written = snprintf(text,
+                            sizeof(text),
+                            "%d.%02d %s",
+                            num1,
+                            num2,
+                            name);
+    if ((object_written > 0) &&
+        ((size_t)object_written < sizeof(object_name)) &&
+        (text_written > 0) &&
+        ((size_t)text_written < sizeof(text)))
     {
-        tjc_send_string(str1);
+        tjc_send_txt(object_name, "txt", text);
     }
 }
 
