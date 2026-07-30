@@ -1,0 +1,15 @@
+=== HostSpectrum ===
+PASS no-signal zero/bounded-noise rejected threshold=16
+PASS lower-bound        f0=  9996.53Hz err=   3.47Hz n=3 rms= 6615.76 vpp=20856.26 h1=8998.5 h2=2399.4 h3=898.1
+PASS non-bin-103333     f0=103330.90Hz err=   2.40Hz n=3 rms= 7336.98 vpp=23255.35 h1=9999.0 h2=2499.1 h3=1198.8
+PASS two-tone-250k      f0=250003.86Hz err=   3.86Hz n=2 rms= 6487.88 vpp=19225.48 h1=8997.3 h2=1798.2
+PASS upper-bound        f0=500003.72Hz err=   3.72Hz n=1 rms= 5655.30 vpp=15995.61 h1=7997.8
+PASS official-h1-h3-h4  f0= 10501.56Hz err=   1.56Hz n=3 rms= 5786.17 vpp=21502.27 h1=3499.7 h3=6997.5 h4=2397.2
+PASS unmatched-spur-250k f0= 99995.19Hz err=   4.81Hz n=1 rms=  706.79 vpp= 1999.10 h1=999.5 spur=250004.2Hz:312.4
+
+=== HostMeasurement ===
+PASS calibrated measurement conversion
+PASS missing calibration rejected
+PASS production 7-point calibration and interpolation
+PASS 1/3-cycle waveform alignment error=0.01298
+PASS end-to-end absolute limits f0err=3.39Hz h1err=0.016mV h5err=0.153mV rmserr=0.048mV upperr=0.336mV

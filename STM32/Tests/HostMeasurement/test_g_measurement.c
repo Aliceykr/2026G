@@ -1,0 +1,512 @@
+#include "GMeasurement.h"
+#include "GMeasurementCalibration.h"
+
+#include <math.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+
+#define TEST_PI 3.14159265358979323846
+#define TEST_FRAME_LENGTH 4096U
+
+static int16_t s_FrameA[TEST_FRAME_LENGTH];
+static int16_t s_FrameB[TEST_FRAME_LENGTH];
+
+static int NearlyEqual(double actual, double expected, double tolerance)
+{
+    return fabs(actual - expected) <= tolerance;
+}
+
+static double ReconstructExpectedUpp(const SpectrumResult *spectrum,
+                                     double mv_per_code)
+{
+    double minimum = 0.0;
+    double maximum = 0.0;
+    unsigned int point;
+    uint8_t component;
+
+    for (point = 0U; point < 65536U; point++)
+    {
+        double phase = 2.0 * TEST_PI * (double)point / 65536.0;
+        double value = 0.0;
+
+        for (component = 0U;
+             component < spectrum->component_count;
+             component++)
+        {
+            const SpectrumComponent *item =
+                &spectrum->components[component];
+
+            value += (double)item->amplitude_codes * mv_per_code *
+                     cos((double)item->harmonic * phase +
+                         (double)item->phase_rad);
+        }
+
+        if (point == 0U)
+        {
+            minimum = value;
+            maximum = value;
+        }
+        else
+        {
+            if (value < minimum)
+            {
+                minimum = value;
+            }
+            if (value > maximum)
+            {
+                maximum = value;
+            }
+        }
+    }
+
+    return maximum - minimum;
+}
+
+static int TestMeasurementConversion(void)
+{
+    static const GMeasurementCalibrationPoint calibration_points[] =
+    {
+        {  10000.0f, 0.0100f },
+        { 500000.0f, 0.0200f }
+    };
+    static const GMeasurementCalibration calibration =
+    {
+        calibration_points,
+        2U
+    };
+    SpectrumResult spectrum;
+    GMeasurementResult measurement;
+    double expected_rms;
+    double expected_upp;
+
+    memset(&spectrum, 0, sizeof(spectrum));
+    spectrum.valid = 1U;
+    spectrum.fundamental_hz = 100000.0f;
+    spectrum.component_count = 3U;
+    spectrum.components[0].harmonic = 1U;
+    spectrum.components[0].frequency_hz = 100000.0f;
+    spectrum.components[0].amplitude_codes = 1000.0f;
+    spectrum.components[0].phase_rad = 0.2f;
+    spectrum.components[1].harmonic = 3U;
+    spectrum.components[1].frequency_hz = 300000.0f;
+    spectrum.components[1].amplitude_codes = 400.0f;
+    spectrum.components[1].phase_rad = -0.7f;
+    spectrum.components[2].harmonic = 4U;
+    spectrum.components[2].frequency_hz = 400000.0f;
+    spectrum.components[2].amplitude_codes = 200.0f;
+    spectrum.components[2].phase_rad = 1.1f;
+
+    if (GMeasurement_Convert(&spectrum,
+                             &calibration,
+                             &measurement) == 0U)
+    {
+        printf("FAIL conversion returned invalid\n");
+        return 0;
+    }
+
+    /*
+     * 100 kHz 插值得 0.0118367347 mV/code；
+     * 300 kHz 插值得 0.0159183673；400 kHz 插值得 0.0179591837。
+     */
+    if (!NearlyEqual(measurement.components[0].amplitude_mv,
+                     11.8367347,
+                     0.002) ||
+        !NearlyEqual(measurement.components[1].amplitude_mv,
+                     6.3673469,
+                     0.002) ||
+        !NearlyEqual(measurement.components[2].amplitude_mv,
+                     3.5918367,
+                     0.002))
+    {
+        printf("FAIL conversion interpolation %.5f %.5f %.5f\n",
+               (double)measurement.components[0].amplitude_mv,
+               (double)measurement.components[1].amplitude_mv,
+               (double)measurement.components[2].amplitude_mv);
+        return 0;
+    }
+
+    expected_rms =
+        sqrt((11.8367347 * 11.8367347 +
+              6.3673469 * 6.3673469 +
+              3.5918367 * 3.5918367) / 2.0);
+    if (!NearlyEqual(measurement.urms_mv, expected_rms, 0.003))
+    {
+        printf("FAIL conversion rms actual=%.6f expected=%.6f\n",
+               (double)measurement.urms_mv,
+               expected_rms);
+        return 0;
+    }
+
+    /*
+     * 构造一个等比例标定结果，只用来独立核对相位重建 Upp。
+     */
+    {
+        static const GMeasurementCalibrationPoint flat_point =
+        {
+            10000.0f,
+            0.01f
+        };
+        static const GMeasurementCalibration flat_calibration =
+        {
+            &flat_point,
+            1U
+        };
+
+        if (GMeasurement_Convert(&spectrum,
+                                 &flat_calibration,
+                                 &measurement) == 0U)
+        {
+            printf("FAIL flat conversion returned invalid\n");
+            return 0;
+        }
+        expected_upp = ReconstructExpectedUpp(&spectrum, 0.01);
+        if (!NearlyEqual(measurement.upp_mv, expected_upp, 0.02))
+        {
+            printf("FAIL conversion upp actual=%.6f expected=%.6f\n",
+                   (double)measurement.upp_mv,
+                   expected_upp);
+            return 0;
+        }
+    }
+
+    printf("PASS calibrated measurement conversion\n");
+    return 1;
+}
+
+static int TestMissingCalibration(void)
+{
+    SpectrumResult spectrum;
+    GMeasurementResult measurement;
+    GMeasurementCalibration calibration = { NULL, 0U };
+
+    memset(&spectrum, 0, sizeof(spectrum));
+    memset(&measurement, 0xA5, sizeof(measurement));
+    spectrum.valid = 1U;
+    spectrum.component_count = 1U;
+    spectrum.components[0].harmonic = 1U;
+    spectrum.components[0].frequency_hz = 100000.0f;
+    spectrum.components[0].amplitude_codes = 1000.0f;
+
+    if ((GMeasurement_Convert(&spectrum,
+                              &calibration,
+                              &measurement) != 0U) ||
+        (measurement.valid != 0U))
+    {
+        printf("FAIL missing calibration accepted\n");
+        return 0;
+    }
+
+    printf("PASS missing calibration rejected\n");
+    return 1;
+}
+
+static int TestProductionCalibration(void)
+{
+    static const float expected_frequencies[] =
+    {
+         10000.0f,
+         50000.0f,
+        100000.0f,
+        200000.0f,
+        300000.0f,
+        400000.0f,
+        500000.0f
+    };
+    static const float expected_scales[] =
+    {
+        0.035275259f,
+        0.035068414f,
+        0.034883149f,
+        0.035057586f,
+        0.035663438f,
+        0.035773331f,
+        0.036831843f
+    };
+    const GMeasurementCalibration *calibration =
+        GMeasurementCalibration_Get();
+    SpectrumResult spectrum;
+    GMeasurementResult measurement;
+    uint8_t index;
+    double expected_scale_150k =
+        0.5 * ((double)expected_scales[2] +
+               (double)expected_scales[3]);
+
+    if ((calibration == NULL) ||
+        (calibration->points == NULL) ||
+        (calibration->point_count != 7U))
+    {
+        printf("FAIL production calibration point count\n");
+        return 0;
+    }
+
+    for (index = 0U; index < calibration->point_count; index++)
+    {
+        if (!NearlyEqual(calibration->points[index].frequency_hz,
+                         expected_frequencies[index],
+                         0.01) ||
+            !NearlyEqual(calibration->points[index].mv_per_code,
+                         expected_scales[index],
+                         1.0e-8))
+        {
+            printf("FAIL production calibration point %u\n",
+                   (unsigned int)index);
+            return 0;
+        }
+    }
+
+    memset(&spectrum, 0, sizeof(spectrum));
+    spectrum.valid = 1U;
+    spectrum.component_count = 1U;
+    spectrum.components[0].harmonic = 1U;
+    spectrum.components[0].frequency_hz = 150000.0f;
+    spectrum.components[0].amplitude_codes = 1000.0f;
+
+    if ((GMeasurement_Convert(&spectrum,
+                              calibration,
+                              &measurement) == 0U) ||
+        !NearlyEqual(measurement.components[0].amplitude_mv,
+                     1000.0 * expected_scale_150k,
+                     0.002))
+    {
+        printf("FAIL production calibration interpolation\n");
+        return 0;
+    }
+
+    printf("PASS production 7-point calibration and interpolation\n");
+    return 1;
+}
+
+static void GenerateWaveform(int16_t *frame, double phase_offset)
+{
+    unsigned int index;
+    const double f0 = 10500.0;
+    const double fs = 5000000.0;
+
+    for (index = 0U; index < TEST_FRAME_LENGTH; index++)
+    {
+        double theta =
+            2.0 * TEST_PI * f0 * (double)index / fs + phase_offset;
+        double value =
+            700.0 +
+            3500.0 * cos(theta) +
+            7000.0 * cos(3.0 * theta - 0.7) +
+            2400.0 * cos(4.0 * theta + 1.1);
+
+        frame[index] =
+            (int16_t)((value >= 0.0) ? (value + 0.5) : (value - 0.5));
+    }
+}
+
+static int TestWaveformCycles(void)
+{
+    GMeasurementWaveform one_a;
+    GMeasurementWaveform one_b;
+    GMeasurementWaveform three;
+    double normalized_error = 0.0;
+    double range;
+    uint16_t index;
+
+    GenerateWaveform(s_FrameA, 0.37);
+    GenerateWaveform(s_FrameB, 1.61);
+
+    if ((GMeasurement_BuildWaveform(s_FrameA,
+                                    TEST_FRAME_LENGTH,
+                                    5000000.0f,
+                                    10500.0f,
+                                    1U,
+                                    &one_a) == 0U) ||
+        (GMeasurement_BuildWaveform(s_FrameB,
+                                    TEST_FRAME_LENGTH,
+                                    5000000.0f,
+                                    10500.0f,
+                                    1U,
+                                    &one_b) == 0U) ||
+        (GMeasurement_BuildWaveform(s_FrameA,
+                                    TEST_FRAME_LENGTH,
+                                    5000000.0f,
+                                    10500.0f,
+                                    3U,
+                                    &three) == 0U))
+    {
+        printf("FAIL waveform builder returned invalid\n");
+        return 0;
+    }
+
+    if ((one_a.cycles != 1U) ||
+        (three.cycles != 3U) ||
+        !NearlyEqual(one_a.span_samples,
+                     5000000.0 / 10500.0,
+                     0.05) ||
+        !NearlyEqual(three.span_samples,
+                     3.0 * 5000000.0 / 10500.0,
+                     0.15))
+    {
+        printf("FAIL waveform span one=%.3f three=%.3f\n",
+               (double)one_a.span_samples,
+               (double)three.span_samples);
+        return 0;
+    }
+
+    range = (double)one_a.maximum_code - (double)one_a.minimum_code;
+    for (index = 0U; index < G_MEASUREMENT_WAVEFORM_POINTS; index++)
+    {
+        normalized_error +=
+            fabs((double)one_a.points[index] -
+                 (double)one_b.points[index]) /
+            range;
+    }
+    normalized_error /= (double)G_MEASUREMENT_WAVEFORM_POINTS;
+
+    if (normalized_error > 0.03)
+    {
+        printf("FAIL waveform phase alignment error=%.5f\n",
+               normalized_error);
+        return 0;
+    }
+
+    printf("PASS 1/3-cycle waveform alignment error=%.5f\n",
+           normalized_error);
+    return 1;
+}
+
+static double TestCalibrationScale(double frequency_hz)
+{
+    const double scale_100k = 0.010000;
+    const double scale_500k = 0.010563;
+
+    if (frequency_hz <= 100000.0)
+    {
+        return scale_100k;
+    }
+    if (frequency_hz >= 500000.0)
+    {
+        return scale_500k;
+    }
+
+    return scale_100k +
+           (frequency_hz - 100000.0) /
+           400000.0 *
+           (scale_500k - scale_100k);
+}
+
+static double ExpectedPhysicalUpp(void)
+{
+    double minimum = 0.0;
+    double maximum = 0.0;
+    unsigned int point;
+
+    for (point = 0U; point < 65536U; point++)
+    {
+        double theta = 2.0 * TEST_PI * (double)point / 65536.0;
+        double value =
+            80.0 * cos(theta + 0.2) +
+            30.0 * cos(5.0 * theta - 0.7);
+
+        if (point == 0U)
+        {
+            minimum = value;
+            maximum = value;
+        }
+        else
+        {
+            if (value < minimum)
+            {
+                minimum = value;
+            }
+            if (value > maximum)
+            {
+                maximum = value;
+            }
+        }
+    }
+
+    return maximum - minimum;
+}
+
+static int TestEndToEndMvLimits(void)
+{
+    static const GMeasurementCalibrationPoint calibration_points[] =
+    {
+        { 100000.0f, 0.010000f },
+        { 500000.0f, 0.010563f }
+    };
+    static const GMeasurementCalibration calibration =
+    {
+        calibration_points,
+        2U
+    };
+    SpectrumResult spectrum;
+    GMeasurementResult measurement;
+    double expected_rms = sqrt((80.0 * 80.0 + 30.0 * 30.0) / 2.0);
+    double expected_upp = ExpectedPhysicalUpp();
+    unsigned int index;
+
+    for (index = 0U; index < TEST_FRAME_LENGTH; index++)
+    {
+        double time = (double)index / (double)SPECTRUM_SAMPLE_RATE_HZ;
+        double fundamental_codes =
+            80.0 / TestCalibrationScale(100000.0);
+        double harmonic_codes =
+            30.0 / TestCalibrationScale(500000.0);
+        double value =
+            700.0 +
+            fundamental_codes *
+                cos(2.0 * TEST_PI * 100000.0 * time + 0.2) +
+            harmonic_codes *
+                cos(2.0 * TEST_PI * 500000.0 * time - 0.7);
+
+        s_FrameA[index] =
+            (int16_t)((value >= 0.0) ? (value + 0.5) : (value - 0.5));
+    }
+
+    if ((SpectrumAnalyzer_Run(s_FrameA, &spectrum) == 0U) ||
+        (GMeasurement_Convert(&spectrum,
+                              &calibration,
+                              &measurement) == 0U))
+    {
+        printf("FAIL end-to-end pipeline returned invalid\n");
+        return 0;
+    }
+
+    if ((spectrum.component_count != 2U) ||
+        (spectrum.components[0].harmonic != 1U) ||
+        (spectrum.components[1].harmonic != 5U) ||
+        (fabs((double)spectrum.fundamental_hz - 100000.0) > 1000.0) ||
+        (fabs((double)measurement.components[0].amplitude_mv - 80.0) >
+         5.0) ||
+        (fabs((double)measurement.components[1].amplitude_mv - 30.0) >
+         5.0) ||
+        (fabs((double)measurement.urms_mv - expected_rms) > 5.0) ||
+        (fabs((double)measurement.upp_mv - expected_upp) > 5.0))
+    {
+        printf("FAIL end-to-end f0=%.2f h1=%.3f h5=%.3f rms=%.3f upp=%.3f\n",
+               (double)spectrum.fundamental_hz,
+               (double)measurement.components[0].amplitude_mv,
+               (double)measurement.components[1].amplitude_mv,
+               (double)measurement.urms_mv,
+               (double)measurement.upp_mv);
+        return 0;
+    }
+
+    printf("PASS end-to-end absolute limits f0err=%.2fHz "
+           "h1err=%.3fmV h5err=%.3fmV rmserr=%.3fmV upperr=%.3fmV\n",
+           fabs((double)spectrum.fundamental_hz - 100000.0),
+           fabs((double)measurement.components[0].amplitude_mv - 80.0),
+           fabs((double)measurement.components[1].amplitude_mv - 30.0),
+           fabs((double)measurement.urms_mv - expected_rms),
+           fabs((double)measurement.upp_mv - expected_upp));
+    return 1;
+}
+
+int main(void)
+{
+    int passed = 1;
+
+    passed &= TestMeasurementConversion();
+    passed &= TestMissingCalibration();
+    passed &= TestProductionCalibration();
+    passed &= TestWaveformCycles();
+    passed &= TestEndToEndMvLimits();
+    return passed ? 0 : 1;
+}

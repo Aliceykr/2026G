@@ -1,0 +1,112 @@
+# 2026 G 题最小数据闭环 Revision
+
+set_global_assignment -name FAMILY "Cyclone IV E"
+set_global_assignment -name DEVICE EP4CE6E22C8
+set_global_assignment -name TOP_LEVEL_ENTITY g_measure_top
+set_global_assignment -name ORIGINAL_QUARTUS_VERSION 13.0
+set_global_assignment -name LAST_QUARTUS_VERSION "18.0.0 Standard Edition"
+set_global_assignment -name PROJECT_OUTPUT_DIRECTORY output_files_g
+set_global_assignment -name MIN_CORE_JUNCTION_TEMP 0
+set_global_assignment -name MAX_CORE_JUNCTION_TEMP 85
+set_global_assignment -name NOMINAL_CORE_SUPPLY_VOLTAGE 1.2V
+set_global_assignment -name ENABLE_SIGNALTAP OFF
+
+set_global_assignment -name SDC_FILE ADC_RAM_G.sdc
+set_global_assignment -name QIP_FILE ip/my_pll/my_pll.qip
+set_global_assignment -name QIP_FILE ip/RAM/RAM.qip
+set_global_assignment -name QIP_FILE ip/RAM2/RAM2.qip
+set_global_assignment -name VERILOG_FILE src/g_spi_slave.v
+set_global_assignment -name VERILOG_FILE src/g_cic3_decimator.v
+set_global_assignment -name VERILOG_FILE src/g_sos3_lowpass.v
+set_global_assignment -name VERILOG_FILE src/g_measure_top.v
+
+set_location_assignment PIN_23 -to sys_clk
+set_location_assignment PIN_25 -to sys_rst_n
+
+set_location_assignment PIN_28 -to SPI_CS_R
+set_location_assignment PIN_30 -to SCLK_R
+set_location_assignment PIN_31 -to MISO
+set_location_assignment PIN_32 -to MOSI
+
+set_location_assignment PIN_7 -to ad1_clk
+set_location_assignment PIN_3 -to ad2_clk
+set_location_assignment PIN_111 -to ad1_in[11]
+set_location_assignment PIN_112 -to ad1_in[10]
+set_location_assignment PIN_113 -to ad1_in[9]
+set_location_assignment PIN_114 -to ad1_in[8]
+set_location_assignment PIN_115 -to ad1_in[7]
+set_location_assignment PIN_119 -to ad1_in[6]
+set_location_assignment PIN_120 -to ad1_in[5]
+set_location_assignment PIN_121 -to ad1_in[4]
+set_location_assignment PIN_124 -to ad1_in[3]
+set_location_assignment PIN_125 -to ad1_in[2]
+set_location_assignment PIN_126 -to ad1_in[1]
+set_location_assignment PIN_127 -to ad1_in[0]
+set_location_assignment PIN_128 -to ad2_in[11]
+set_location_assignment PIN_129 -to ad2_in[10]
+set_location_assignment PIN_132 -to ad2_in[9]
+set_location_assignment PIN_133 -to ad2_in[8]
+set_location_assignment PIN_135 -to ad2_in[7]
+set_location_assignment PIN_136 -to ad2_in[6]
+set_location_assignment PIN_137 -to ad2_in[5]
+set_location_assignment PIN_138 -to ad2_in[4]
+set_location_assignment PIN_141 -to ad2_in[3]
+set_location_assignment PIN_142 -to ad2_in[2]
+set_location_assignment PIN_143 -to ad2_in[1]
+set_location_assignment PIN_144 -to ad2_in[0]
+
+set_location_assignment PIN_68 -to dac_clkA
+set_location_assignment PIN_69 -to dac_wrtA
+set_location_assignment PIN_67 -to dac_clkB
+set_location_assignment PIN_66 -to dac_wrtB
+set_location_assignment PIN_87 -to dac_dataA[13]
+set_location_assignment PIN_86 -to dac_dataA[12]
+set_location_assignment PIN_85 -to dac_dataA[11]
+set_location_assignment PIN_84 -to dac_dataA[10]
+set_location_assignment PIN_83 -to dac_dataA[9]
+set_location_assignment PIN_80 -to dac_dataA[8]
+set_location_assignment PIN_77 -to dac_dataA[7]
+set_location_assignment PIN_76 -to dac_dataA[6]
+set_location_assignment PIN_75 -to dac_dataA[5]
+set_location_assignment PIN_74 -to dac_dataA[4]
+set_location_assignment PIN_73 -to dac_dataA[3]
+set_location_assignment PIN_72 -to dac_dataA[2]
+set_location_assignment PIN_71 -to dac_dataA[1]
+set_location_assignment PIN_70 -to dac_dataA[0]
+set_location_assignment PIN_65 -to dac_dataB[13]
+set_location_assignment PIN_64 -to dac_dataB[12]
+set_location_assignment PIN_60 -to dac_dataB[11]
+set_location_assignment PIN_59 -to dac_dataB[10]
+set_location_assignment PIN_58 -to dac_dataB[9]
+set_location_assignment PIN_55 -to dac_dataB[8]
+set_location_assignment PIN_54 -to dac_dataB[7]
+set_location_assignment PIN_53 -to dac_dataB[6]
+set_location_assignment PIN_52 -to dac_dataB[5]
+set_location_assignment PIN_51 -to dac_dataB[4]
+set_location_assignment PIN_50 -to dac_dataB[3]
+set_location_assignment PIN_49 -to dac_dataB[2]
+set_location_assignment PIN_46 -to dac_dataB[1]
+set_location_assignment PIN_44 -to dac_dataB[0]
+
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to sys_clk
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to sys_rst_n
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to SPI_CS_R
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to SCLK_R
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to MOSI
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to MISO
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to ad1_clk
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to ad2_clk
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to ad1_in
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to ad2_in
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to dac_clkA
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to dac_wrtA
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to dac_clkB
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to dac_wrtB
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to dac_dataA
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to dac_dataB
+
+
+set_global_assignment -name PARTITION_NETLIST_TYPE SOURCE -section_id Top
+set_global_assignment -name PARTITION_FITTER_PRESERVATION_LEVEL PLACEMENT_AND_ROUTING -section_id Top
+set_global_assignment -name PARTITION_COLOR 16764057 -section_id Top
+set_instance_assignment -name PARTITION_HIERARCHY root_partition -to | -section_id Top

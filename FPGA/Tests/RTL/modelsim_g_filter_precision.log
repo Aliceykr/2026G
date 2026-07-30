@@ -1,0 +1,17 @@
+# vsim -c tb_g_filter_precision -do "run -all; quit -f" 
+# Start time: 19:19:05 on Jul 29,2026
+# Loading sv_std.std
+# Loading work.tb_g_filter_precision
+# Loading work.g_cic3_decimator
+# Loading work.g_sos3_lowpass
+# run -all
+# RTL_TONE f=100000Hz in_peak=1000 out_min=-15503 out_max=15502 out_vpp=31005 out_rms=10977.0179
+# RTL_TONE f=500000Hz in_peak=1000 out_min=-13992 out_max=13971 out_vpp=27963 out_rms=10391.8422
+# RTL_TONE f=1000000Hz in_peak=1000 out_min=-22 out_max=4 out_vpp=26 out_rms=12.1017
+# RTL_TONE f=100000Hz in_peak=2047 out_min=-31802 out_max=31802 out_vpp=63604 out_rms=22491.8578
+# RTL_TONE f=500000Hz in_peak=2047 out_min=-28570 out_max=28592 out_vpp=57162 out_rms=21235.4545
+# PASS: g_filter_precision
+# ** Note: $finish    : ../tb_g_filter_precision.sv(131)
+#    Time: 4609900 ns  Iteration: 1  Instance: /tb_g_filter_precision
+# End time: 19:19:08 on Jul 29,2026, Elapsed time: 0:00:03
+# Errors: 0, Warnings: 0

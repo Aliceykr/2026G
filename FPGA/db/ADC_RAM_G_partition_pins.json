@@ -1,0 +1,81 @@
+{
+	"partitions" : [
+		{
+			"name" : "Top",
+			"pins" : [
+				{
+					"name" : "MISO",
+					"strict" : false
+				},
+				{
+					"name" : "sys_clk",
+					"strict" : false
+				},
+				{
+					"name" : "sys_rst_n",
+					"strict" : false
+				},
+				{
+					"name" : "SCLK_R",
+					"strict" : false
+				},
+				{
+					"name" : "SPI_CS_R",
+					"strict" : false
+				},
+				{
+					"name" : "MOSI",
+					"strict" : false
+				},
+				{
+					"name" : "ad1_in[9]",
+					"strict" : false
+				},
+				{
+					"name" : "ad1_in[8]",
+					"strict" : false
+				},
+				{
+					"name" : "ad1_in[7]",
+					"strict" : false
+				},
+				{
+					"name" : "ad1_in[6]",
+					"strict" : false
+				},
+				{
+					"name" : "ad1_in[5]",
+					"strict" : false
+				},
+				{
+					"name" : "ad1_in[4]",
+					"strict" : false
+				},
+				{
+					"name" : "ad1_in[3]",
+					"strict" : false
+				},
+				{
+					"name" : "ad1_in[2]",
+					"strict" : false
+				},
+				{
+					"name" : "ad1_in[1]",
+					"strict" : false
+				},
+				{
+					"name" : "ad1_in[0]",
+					"strict" : false
+				},
+				{
+					"name" : "ad1_in[10]",
+					"strict" : false
+				},
+				{
+					"name" : "ad1_in[11]",
+					"strict" : false
+				}
+			]
+		}
+	]
+}
