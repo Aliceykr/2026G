@@ -1,0 +1,2 @@
+fundamental_hz,harmonic,target_frequency_hz,frames,true_relative_deg,measured_error_deg,circular_stddev_deg,resultant
+200000.0,2,400000.0,10,87.0,-112.47999999893385,0.03605551302601993,0.9999998019986938

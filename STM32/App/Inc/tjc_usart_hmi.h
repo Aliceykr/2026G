@@ -62,7 +62,7 @@ void UART4_IRQHandler(void);
  */
 uint8_t TjcHmi_ReadEvent(TjcHmiEvent *event, uint8_t *cycles);
 
-/* t6状态显示：busy=1显示BUSY，busy=0显示READY。 */
+/* t6中文状态显示：busy=1显示“状态:测量中”，busy=0显示“状态:就绪”。 */
 void TjcHmi_SetComputeBusy(uint8_t busy);
 void TjcHmi_SetStatusText(const char *text);
 

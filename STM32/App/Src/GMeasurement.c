@@ -402,6 +402,7 @@ static uint8_t GMeasurement_ValidateCalibration(
 void GMeasurement_QuantizeHalfMv(GMeasurementResult *measurement)
 {
     GMeasurementResult quantized;
+    float sum_square = 0.0f;
     uint8_t component;
 
     if ((measurement == NULL) ||
@@ -422,10 +423,13 @@ void GMeasurement_QuantizeHalfMv(GMeasurementResult *measurement)
 
         item->amplitude_mv =
             roundf(item->amplitude_mv * 2.0f) * 0.5f;
+        sum_square += item->amplitude_mv * item->amplitude_mv;
     }
 
+    quantized.urms_mv = sqrtf(0.5f * sum_square);
     GMeasurement_UpdateUpp(&quantized);
     measurement->upp_mv = quantized.upp_mv;
+    measurement->urms_mv = quantized.urms_mv;
 }
 
 static float GMeasurement_GetMvPerCode(

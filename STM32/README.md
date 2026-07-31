@@ -35,7 +35,7 @@ HAL_Init
 | 淘晶驰UART4 TX/RX | PA0/PA1 |
 | SWDIO/SWCLK | PA13/PA14 |
 
-USART1为`115200 8N1`，继续输出`G_FLOW`、`G_MEAS`、`G_WAVE`和
+USART1为`921600 8N1`，继续输出`G_FLOW`、`G_MEAS`、`G_WAVE`和
 `G_WAVE_DATA`调试协议。淘晶驰屏独占UART4（`921600 8N1`），串口、
 GPIO、NVIC和接收队列均封装在`tjc_usart_hmi.c`中。
 淘晶驰屏按钮弹起事件也可发送以下二进制帧：

@@ -904,7 +904,7 @@ static int TestHalfMvQuantization(void)
     static const unsigned int harmonics[] = {1U, 2U, 4U};
     static const double phases[] = {0.17, 1.73, -0.52};
     GMeasurementResult measurement;
-    double original_rms;
+    double expected_rms;
     double expected_upp;
 
     memset(&measurement, 0, sizeof(measurement));
@@ -919,9 +919,9 @@ static int TestHalfMvQuantization(void)
     measurement.components[2].harmonic = 4U;
     measurement.components[2].amplitude_mv = 41.76f;
     measurement.components[2].phase_rad = (float)phases[2];
-    original_rms = sqrt((50.24 * 50.24 + 37.26 * 37.26 +
-                         41.76 * 41.76) / 2.0);
-    measurement.urms_mv = (float)original_rms;
+    measurement.urms_mv = (float)sqrt((50.24 * 50.24 +
+                                       37.26 * 37.26 +
+                                       41.76 * 41.76) / 2.0);
 
     GMeasurement_QuantizeHalfMv(&measurement);
 
@@ -929,11 +929,13 @@ static int TestHalfMvQuantization(void)
                                            harmonics,
                                            phases,
                                            3U);
+    expected_rms = sqrt((50.0 * 50.0 + 37.5 * 37.5 +
+                         42.0 * 42.0) / 2.0);
 
     if (!NearlyEqual(measurement.components[0].amplitude_mv, 50.24, 1e-5) ||
         !NearlyEqual(measurement.components[1].amplitude_mv, 37.26, 1e-5) ||
         !NearlyEqual(measurement.components[2].amplitude_mv, 41.76, 1e-5) ||
-        !NearlyEqual(measurement.urms_mv, original_rms, 0.001) ||
+        !NearlyEqual(measurement.urms_mv, expected_rms, 0.001) ||
         !NearlyEqual(measurement.upp_mv, expected_upp, 0.001))
     {
         printf("FAIL half-mV quantization h=%.3f/%.3f/%.3f rms=%.6f upp=%.6f expected=%.6f\n",
@@ -946,7 +948,7 @@ static int TestHalfMvQuantization(void)
         return 0;
     }
 
-    puts("PASS raw H/RMS preserved with half-mV Vpp reconstruction");
+    puts("PASS raw H preserved with half-mV Vpp/Vrms reconstruction");
     return 1;
 }
 

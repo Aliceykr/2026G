@@ -71,6 +71,11 @@
 #define TJC_RANGE_LABEL_GB2312   "\xC1\xBF\xB3\xCC\xC7\xD0\xBB\xBB"
 #define TJC_COMPUTING_TEXT       "BUSY"
 #define TJC_READY_TEXT           "READY"
+#define TJC_STATUS_LABEL_GB2312  "\xD7\xB4\xCC\xAC"
+#define TJC_COMPUTING_GB2312     "\xB2\xE2\xC1\xBF\xD6\xD0"
+#define TJC_READY_GB2312         "\xBE\xCD\xD0\xF7"
+#define TJC_TIMEOUT_GB2312       "\xB3\xAC\xCA\xB1"
+#define TJC_ERROR_GB2312         "\xB2\xC9\xBC\xAF\xB4\xED\xCE\xF3"
 
 /** UART4接收环形缓冲区；ISR写tail，主循环读head。 */
 typedef struct
@@ -512,7 +517,31 @@ void TjcHmi_SetStatusText(const char *text)
 {
     if (text != NULL)
     {
-        tjc_send_txt("t6", "txt", text);
+        char status_text[64];
+        const char *display_text = text;
+
+        if (strcmp(text, TJC_COMPUTING_TEXT) == 0)
+        {
+            display_text = TJC_COMPUTING_GB2312;
+        }
+        else if (strcmp(text, TJC_READY_TEXT) == 0)
+        {
+            display_text = TJC_READY_GB2312;
+        }
+        else if (strcmp(text, "TIMEOUT") == 0)
+        {
+            display_text = TJC_TIMEOUT_GB2312;
+        }
+        else if (strstr(text, "ERR") != NULL)
+        {
+            display_text = TJC_ERROR_GB2312;
+        }
+
+        (void)snprintf(status_text,
+                       sizeof(status_text),
+                       TJC_STATUS_LABEL_GB2312 "\xA3\xBA%s",
+                       display_text);
+        tjc_send_txt("t6", "txt", status_text);
     }
 }
 

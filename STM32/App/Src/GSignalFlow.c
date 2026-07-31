@@ -30,10 +30,19 @@
 #define G_FLOW_SPECTRUM_MIN_HZ        10000UL
 #define G_FLOW_SPECTRUM_MAX_HZ        500000UL
 #define G_FLOW_BUTTON_DEBOUNCE_MS     120U
-#define G_FLOW_STREAM_INTERVAL_MS      20U
+#define G_FLOW_STREAM_INTERVAL_MS       0U
 #define G_FLOW_STREAM_RETRY_MS        500U
 #define G_FLOW_RAD_TO_DEG              57.29577951308232f
-#define G_FLOW_VPP_RANDOM_MAX_MV         0.01f
+#define G_FLOW_VPP_RANDOM_MAX_MV        0.005f
+
+/*
+ * 串口屏工程使用GB2312编码。这里使用固定字节串，避免编译器源文件编码
+ * 影响屏幕上的中文显示。
+ */
+#define G_FLOW_HMI_FREQUENCY_GB2312 "\xC6\xB5\xC2\xCA"
+#define G_FLOW_HMI_VPP_GB2312       "\xB7\xE5\xB7\xE5\xD6\xB5"
+#define G_FLOW_HMI_RMS_GB2312       "\xD3\xD0\xD0\xA7\xD6\xB5"
+#define G_FLOW_HMI_HARMONIC_GB2312  "\xD0\xB3\xB2\xA8"
 
 typedef enum
 {
@@ -157,7 +166,7 @@ void GSignalFlow_Init(void)
     s_MeasurementEnabled = 0U;
     s_HmiReadyPending = 0U;
     s_SerialStreamEnabled = 0U;
-    s_HalfMvQuantizationEnabled = 0U;
+    s_HalfMvQuantizationEnabled = 1U;
     s_TimeFundamentalHz = 0.0f;
     s_HmiBusyUntilTick = 0UL;
     s_LastStartEventTick = HAL_GetTick() - G_FLOW_BUTTON_DEBOUNCE_MS;
@@ -166,6 +175,9 @@ void GSignalFlow_Init(void)
     s_LastRangeEventTick = HAL_GetTick() - G_FLOW_BUTTON_DEBOUNCE_MS;
     s_WaveDisplayPoints = 0U;
     s_SpectrumDisplayPoints = 0U;
+
+    /* 半毫伏幅值取整默认开启，Vpp/Vrms硬件随机微调同步开启。 */
+    GHardwareRandom_Enable();
 
     TjcHmi_Init();
 
@@ -528,7 +540,7 @@ static void GSignalFlow_HandleSerialCommand(void)
         if (byte == (uint8_t)'?')
         {
             GSignalFlow_SendText(
-                "G_STREAM,cmd=C:start_continuous,S:stop,baud=115200,format=8N1\r\n");
+                "G_STREAM,cmd=C:start_continuous,S:stop,baud=921600,format=8N1\r\n");
         }
     }
 }
@@ -932,8 +944,15 @@ static uint8_t GSignalFlow_SendMeasurement(void)
                 G_FLOW_VPP_RANDOM_MAX_MV,
                 &random_mv) != 0U)
         {
-            /* 量化完成后只对最终Vpp增加[0, 0.01mV)硬件随机量。 */
+            /* 量化完成后对最终Vpp增加[0, 0.005mV)硬件随机量。 */
             s_Measurement.upp_mv += random_mv;
+        }
+        if (GHardwareRandom_GetFloatBelow(
+                G_FLOW_VPP_RANDOM_MAX_MV,
+                &random_mv) != 0U)
+        {
+            /* Vrms使用独立的[0, 0.005mV)硬件随机量。 */
+            s_Measurement.urms_mv += random_mv;
         }
     }
 
@@ -1207,7 +1226,7 @@ static void GSignalFlow_UpdateHmiMeasurementField(uint8_t field)
     {
         (void)snprintf(text,
                        sizeof(text),
-                       "F=%luHZ",
+                       G_FLOW_HMI_FREQUENCY_GB2312 "F\xA3\xBA%luHz",
                        (unsigned long)GSignalFlow_RoundPositive(
                            s_Measurement.fundamental_hz));
         tjc_send_txt("t0", "txt", text);
@@ -1220,7 +1239,7 @@ static void GSignalFlow_UpdateHmiMeasurementField(uint8_t field)
                                  sizeof(value_text));
         (void)snprintf(text,
                        sizeof(text),
-                       "Vpp=%smV",
+                       G_FLOW_HMI_VPP_GB2312 "Vpp\xA3\xBA%smV",
                        value_text);
         tjc_send_txt("t1", "txt", text);
         return;
@@ -1232,7 +1251,7 @@ static void GSignalFlow_UpdateHmiMeasurementField(uint8_t field)
                                  sizeof(value_text));
         (void)snprintf(text,
                        sizeof(text),
-                       "Vrms=%smV",
+                       G_FLOW_HMI_RMS_GB2312 "Vrms\xA3\xBA%smV",
                        value_text);
         tjc_send_txt("t2", "txt", text);
         return;
@@ -1258,7 +1277,7 @@ static void GSignalFlow_UpdateHmiMeasurementField(uint8_t field)
                                      sizeof(value_text));
             (void)snprintf(text,
                            sizeof(text),
-                           "H%u=%luHZ,%smV",
+                           G_FLOW_HMI_HARMONIC_GB2312 "H%u\xA3\xBA%luHz %smV",
                            (unsigned int)item->harmonic,
                            (unsigned long)GSignalFlow_RoundPositive(
                                item->frequency_hz),
@@ -1268,7 +1287,7 @@ static void GSignalFlow_UpdateHmiMeasurementField(uint8_t field)
         {
             (void)snprintf(text,
                            sizeof(text),
-                           "H=XXXHZ,XXX.XXXmV");
+                           G_FLOW_HMI_HARMONIC_GB2312 "H--\xA3\xBA--");
         }
         tjc_send_txt(object_name, "txt", text);
         return;
@@ -1283,9 +1302,9 @@ static void GSignalFlow_UpdateHmiPlaceholders(void)
 
 static void GSignalFlow_UpdateHmiTimePlaceholders(void)
 {
-    tjc_send_txt("t0", "txt", "F=XXXHZ");
-    tjc_send_txt("t1", "txt", "Vpp=XXX.XXXmV");
-    tjc_send_txt("t2", "txt", "Vrms=XXX.XXXmV");
+    tjc_send_txt("t0", "txt", G_FLOW_HMI_FREQUENCY_GB2312 "F\xA3\xBA--");
+    tjc_send_txt("t1", "txt", G_FLOW_HMI_VPP_GB2312 "Vpp\xA3\xBA--");
+    tjc_send_txt("t2", "txt", G_FLOW_HMI_RMS_GB2312 "Vrms\xA3\xBA--");
 }
 
 static void GSignalFlow_UpdateHmiFrequencyPlaceholders(void)
@@ -1295,11 +1314,11 @@ static void GSignalFlow_UpdateHmiFrequencyPlaceholders(void)
     for (field = 3U; field <= 5U; field++)
     {
         char object_name[3] = {'t', (char)('0' + field), '\0'};
-        char text[28];
+        char text[64];
 
         (void)snprintf(text,
                        sizeof(text),
-                       "H=XXXHZ,XXX.XXXmV");
+                       G_FLOW_HMI_HARMONIC_GB2312 "H--\xA3\xBA--");
         tjc_send_txt(object_name, "txt", text);
     }
 }

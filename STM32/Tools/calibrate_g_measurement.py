@@ -18,6 +18,44 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from siglent_vxi11 import Vxi11Instrument
 
 
+class RigolScpiInstrument:
+    """Persistent raw-SCPI connection used by the RIGOL DG1022Z."""
+
+    def __init__(self, host: str, timeout: float = 3.0, port: int = 5555) -> None:
+        self.host = host
+        self.timeout = timeout
+        self.port = port
+        self.sock: socket.socket | None = None
+
+    def open(self) -> None:
+        self.sock = socket.create_connection((self.host, self.port), self.timeout)
+        self.sock.settimeout(self.timeout)
+
+    def close(self) -> None:
+        if self.sock is not None:
+            self.sock.close()
+            self.sock = None
+
+    def write(self, command: str) -> None:
+        if self.sock is None:
+            raise ConnectionError("RIGOL SCPI connection is not open")
+        self.sock.sendall((command.rstrip() + "\n").encode("ascii"))
+
+    def query(self, command: str) -> str:
+        if not command.rstrip().endswith("?"):
+            raise ValueError("SCPI query must end in '?'")
+        self.write(command)
+        if self.sock is None:
+            raise ConnectionError("RIGOL SCPI connection is not open")
+        response = bytearray()
+        while not response.endswith(b"\n"):
+            block = self.sock.recv(4096)
+            if not block:
+                raise ConnectionError("RIGOL SCPI socket closed unexpectedly")
+            response.extend(block)
+        return response.decode("ascii", errors="replace").strip()
+
+
 def parse_series(text: str) -> list[float]:
     values: list[float] = []
     for part in text.split(","):
@@ -56,17 +94,55 @@ def circular_mean_degrees(values: list[float]) -> tuple[float, float, float]:
 
 
 class Generator:
-    def __init__(self, host: str) -> None:
-        self.instrument = Vxi11Instrument(host, 3.0)
+    def __init__(self, host: str, kind: str = "auto") -> None:
+        self.host = host
+        self.kind = kind
+        self.instrument = None
+        self.is_rigol = False
 
     def __enter__(self) -> "Generator":
+        if self.kind in ("auto", "rigol"):
+            try:
+                instrument = RigolScpiInstrument(self.host, 3.0)
+                instrument.open()
+                identity = instrument.query("*IDN?")
+                if "RIGOL" in identity.upper():
+                    self.instrument = instrument
+                    self.is_rigol = True
+                    print(f"generator: {identity}")
+                    return self
+                instrument.close()
+                if self.kind == "rigol":
+                    raise RuntimeError(f"expected RIGOL generator, received: {identity}")
+            except (ConnectionError, OSError, RuntimeError):
+                if self.kind == "rigol":
+                    raise
+
+        self.instrument = Vxi11Instrument(self.host, 3.0)
         self.instrument.open()
+        identity = self.instrument.query("*IDN?")
+        if self.kind == "siglent" and "SIGLENT" not in identity.upper():
+            raise RuntimeError(f"expected SIGLENT generator, received: {identity}")
+        print(f"generator: {identity}")
         return self
 
     def __exit__(self, exc_type, exc_value, traceback) -> None:
         self.instrument.close()
 
     def sine(self, frequency_hz: float, vpp_mv: float, phase_deg: float = 0.0) -> None:
+        if self.instrument is None:
+            raise ConnectionError("generator is not connected")
+        if self.is_rigol:
+            self.instrument.write(":OUTP1 OFF")
+            self.instrument.write(":OUTP1:LOAD 50")
+            self.instrument.write(
+                ":SOUR1:APPL:SIN {:.9g},{:.9g},0,{:.9g}".format(
+                    frequency_hz, vpp_mv / 1000.0, phase_deg
+                )
+            )
+            self.instrument.write(":OUTP1 ON")
+            return
+
         self.instrument.write("C1:OUTP OFF")
         self.instrument.write("C1:HARM HARMSTATE,OFF")
         self.instrument.write("C1:OUTP LOAD,50")
@@ -83,9 +159,58 @@ class Generator:
         fundamental_vpp_mv: float,
         fundamental_phase_deg: float,
         items: list[tuple[int, float, float]],
-    ) -> None:
+    ) -> dict[int, float]:
         if any(order < 2 or order > 10 for order, _vpp, _phase in items):
-            raise ValueError("SDG1032X harmonic order must be 2..10")
+            raise ValueError("harmonic order must be 2..10")
+        if self.instrument is None:
+            raise ConnectionError("generator is not connected")
+        if self.is_rigol:
+            highest_order = max([order for order, _vpp, _phase in items], default=2)
+            selected_orders = {order for order, _vpp, _phase in items}
+            user_phase_supported = highest_order <= 8
+            self.instrument.write(":OUTP1 OFF")
+            self.instrument.write(":OUTP1:LOAD 50")
+            self.instrument.write(
+                ":SOUR1:APPL:HARM {:.9g},{:.9g},0,{:.9g}".format(
+                    fundamental_hz,
+                    fundamental_vpp_mv / 1000.0,
+                    fundamental_phase_deg,
+                )
+            )
+            self.instrument.write(f":SOUR1:HARM:ORDER {highest_order}")
+            if user_phase_supported:
+                self.instrument.write(":SOUR1:HARM:TYPE USER")
+                user_mask = "X" + "".join(
+                    "1" if order in selected_orders else "0"
+                    for order in range(2, 9)
+                )
+                self.instrument.write(f":SOUR1:HARM:USER {user_mask}")
+            else:
+                # DG1022Z的USER选择位只覆盖H2~H8。H9/H10使用ALL，
+                # 其余阶次幅值清零，并统一使用仪器实际生效的0度相位。
+                self.instrument.write(":SOUR1:HARM:TYPE ALL")
+            for order in range(2, highest_order + 1):
+                self.instrument.write(f":SOUR1:HARM:AMPL {order},0")
+                self.instrument.write(f":SOUR1:HARM:PHAS {order},0")
+            for order, vpp_mv, phase_deg in items:
+                self.instrument.write(
+                    f":SOUR1:HARM:AMPL {order},{vpp_mv / 1000.0:.9g}"
+                )
+                self.instrument.write(
+                    ":SOUR1:HARM:PHAS {},{:.9g}".format(
+                        order,
+                        phase_deg if user_phase_supported else 0.0,
+                    )
+                )
+            error = self.instrument.query(":SYST:ERR?")
+            if not error.startswith("0,"):
+                raise RuntimeError(f"RIGOL SCPI error: {error}")
+            self.instrument.write(":OUTP1 ON")
+            return {
+                order: (phase_deg if user_phase_supported else 0.0)
+                for order, _vpp, phase_deg in items
+            }
+
         self.instrument.write("C1:OUTP OFF")
         self.instrument.write("C1:HARM HARMSTATE,OFF")
         self.instrument.write("C1:OUTP LOAD,50")
@@ -107,6 +232,7 @@ class Generator:
             )
         self.instrument.write("C1:HARM HARMSTATE,ON")
         self.instrument.write("C1:OUTP ON")
+        return {order: phase_deg for order, _vpp, phase_deg in items}
 
     def restore(self) -> None:
         self.sine(100000.0, 100.0, 0.0)
@@ -250,7 +376,7 @@ def amplitude_sweep(args) -> int:
         (round(float(row["frequency_hz"]), 3), round(float(row["vpp_mv"]), 3))
         for row in rows
     }
-    with Generator(args.generator) as generator, OmniProbe(args.port) as probe:
+    with Generator(args.generator, args.generator_kind) as generator, OmniProbe(args.port) as probe:
         try:
             total = len(frequencies) * len(amplitudes)
             progress = 0
@@ -331,7 +457,7 @@ def phase_sweep(args) -> int:
         (round(float(row["fundamental_hz"]), 3), int(row["harmonic"]))
         for row in rows
     }
-    with Generator(args.generator) as generator, OmniProbe(args.port) as probe:
+    with Generator(args.generator, args.generator_kind) as generator, OmniProbe(args.port) as probe:
         try:
             settings: list[tuple[float, list[int]]] = []
             for fundamental_hz in fundamentals:
@@ -354,7 +480,7 @@ def phase_sweep(args) -> int:
                     f"[{position}/{len(settings)}] f0={fundamental_hz:.0f} Hz, orders={orders}",
                     flush=True,
                 )
-                generator.harmonics(
+                phase_by_order = generator.harmonics(
                     fundamental_hz,
                     args.fundamental_vpp,
                     args.fundamental_phase,
@@ -368,9 +494,8 @@ def phase_sweep(args) -> int:
                     args.timeout,
                 )
                 for order in orders:
-                    # SDG1032X HARMPHASE is already the harmonic's relative
-                    # phase parameter. BSWV PHSE moves the complete waveform
-                    # and must not be subtracted again as n * PHSE.
+                    # 两台信号源的谐波相位参数均表示该谐波的相对相位；
+                    # 基波PHSE移动完整波形，不能再次按n*PHSE重复扣除。
                     true_relative = wrap_degrees(phase_by_order[order])
                     errors = []
                     for frame in frames:
@@ -552,7 +677,12 @@ def self_test(_args) -> int:
 
 
 def add_common_sweep_arguments(parser) -> None:
-    parser.add_argument("--generator", default="10.11.9.230")
+    parser.add_argument("--generator", default="169.254.239.82")
+    parser.add_argument(
+        "--generator-kind",
+        choices=("auto", "rigol", "siglent"),
+        default="auto",
+    )
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--frames", type=int, default=25)
     parser.add_argument("--settle", type=float, default=0.8)
