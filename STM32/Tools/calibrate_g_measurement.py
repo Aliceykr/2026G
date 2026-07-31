@@ -399,8 +399,8 @@ def fit_amplitude(rows: list[dict], c_path: Path) -> None:
     worst_equivalent_noise = 0.0
     for frequency_hz in sorted(grouped):
         samples = sorted(grouped[frequency_hz], key=lambda row: float(row["vpp_mv"]))
-        if len(samples) > 5:
-            raise RuntimeError("firmware supports at most five amplitude levels per frequency")
+        if len(samples) > 9:
+            raise RuntimeError("firmware supports at most nine amplitude levels per frequency")
         lines.append(f"    {{ {frequency_hz:9.1f}f, {len(samples)}U, {{")
         for row in samples:
             codes = float(row["codes_median"])
@@ -534,7 +534,7 @@ def phase_sweep(args) -> int:
                 phase_items = []
                 phase_by_order: dict[int, float] = {}
                 for order in orders:
-                    phase = float((37 * order + 13) % 360)
+                    phase = float((37 * order + args.phase_offset) % 360)
                     phase_by_order[order] = phase
                     phase_items.append((order, args.harmonic_vpp, phase))
                 print(
@@ -776,6 +776,12 @@ def main() -> int:
     phase.add_argument("--fundamental-vpp", type=float, default=80.0)
     phase.add_argument("--harmonic-vpp", type=float, default=50.0)
     phase.add_argument("--fundamental-phase", type=float, default=10.0)
+    phase.add_argument(
+        "--phase-offset",
+        type=float,
+        default=13.0,
+        help="offset used to generate the harmonic relative-phase pattern",
+    )
     phase.add_argument("--output", default="CalibrationData/phase_observations.csv")
     phase.set_defaults(func=phase_sweep)
 

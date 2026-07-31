@@ -38,17 +38,19 @@ static const GMeasurementCalibrationPoint s_CalibrationPoints[] =
 /*
  * RIGOL DG1022Z、50 ohm负载接法实机采集：
  * - 10~500 kHz，每10 kHz一个频点；
- * - 每点50/100/150/200/250 mVpp五档；
+ * - 每点10/20/30/40/50/100/150/200/250 mVpp九档；
  * - 每档25帧，使用原始amplitude_codes中位数；
  * - 二维表直接输出最终分量峰值mV，不再额外应用0.5缩放。
  */
-#include "../../CalibrationData/rigol_amplitude_full_2d.inc"
+#include "../../CalibrationData/rigol_amplitude_full_9level.inc"
 
 /*
  * RIGOL DG1022Z、50 ohm接法的新相位响应候选表。
  * 由84条H2~H8相对相位约束求解，去除了任意线性时延。
  * 平滑权重0.001时约束残差RMS约0.097度、最大约0.271度。
- * 仍需通过不同初相及高频干扰下的组合信号实测后定版。
+ * 不同初相和H2~H8组合实测中，相位残差导致的Vpp误差最大
+ * 约0.040 mV；1.0~1.2 MHz、200 mVpp干扰下有效分量峰值变化
+ * 不超0.0046 mV，当前表可用于幅值重建。
  */
 #include "../../CalibrationData/rigol_phase_w0_001.inc"
 

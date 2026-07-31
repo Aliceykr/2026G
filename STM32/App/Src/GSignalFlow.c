@@ -34,6 +34,10 @@
 #define G_FLOW_STREAM_RETRY_MS        500U
 #define G_FLOW_RAD_TO_DEG              57.29577951308232f
 #define G_FLOW_VPP_RANDOM_MAX_MV        0.005f
+#define G_FLOW_HF_MEDIAN_FRAMES            25U
+#define G_FLOW_HF_MEDIAN_MIN_HZ       490000.0f
+#define G_FLOW_HF_MEDIAN_MAX_PEAK_MV      30.0f
+#define G_FLOW_HF_MEDIAN_FREQ_TOL_HZ    1000.0f
 
 /*
  * 串口屏工程使用GB2312编码。这里使用固定字节串，避免编译器源文件编码
@@ -95,6 +99,10 @@ static uint16_t s_WaveDisplayPoints;
 static uint8_t s_WaveDisplay[G_FLOW_WAVE_MAX_POINTS];
 static uint16_t s_SpectrumDisplayPoints;
 static uint8_t s_SpectrumDisplay[G_FLOW_SPECTRUM_MAX_POINTS];
+static GMeasurementResult s_HfMedianFrames[G_FLOW_HF_MEDIAN_FRAMES];
+static uint8_t s_HfMedianActive;
+static uint8_t s_HfMedianCount;
+static uint32_t s_HfMedianStartTick;
 
 static void GSignalFlow_SendText(const char *text);
 static void GSignalFlow_SendStartup(void);
@@ -139,6 +147,14 @@ static uint8_t GSignalFlow_UpdateHmiSpectrum(uint8_t signal_valid);
 static uint8_t GSignalFlow_BuildQualitativeSpectrum(uint16_t point_count);
 static uint8_t GSignalFlow_UpdateHmiWaveform(void);
 static uint8_t GSignalFlow_BuildAndDisplayWaveform(uint8_t cycles);
+static uint8_t GSignalFlow_ShouldUseHfMedian(
+    const GMeasurementResult *measurement);
+static uint8_t GSignalFlow_HfMedianCompatible(
+    const GMeasurementResult *measurement);
+static void GSignalFlow_StoreHfMedianFrame(
+    const GMeasurementResult *measurement);
+static void GSignalFlow_FinalizeHfMedian(void);
+static float GSignalFlow_Median25(const float *values);
 
 void GSignalFlow_Init(void)
 {
@@ -149,6 +165,7 @@ void GSignalFlow_Init(void)
     memset(&s_Waveform, 0, sizeof(s_Waveform));
     memset(s_WaveDisplay, 0, sizeof(s_WaveDisplay));
     memset(s_SpectrumDisplay, 0, sizeof(s_SpectrumDisplay));
+    memset(s_HfMedianFrames, 0, sizeof(s_HfMedianFrames));
     s_State = G_FLOW_STATE_IDLE;
     s_ActiveMeasurementMode = G_FLOW_MODE_NONE;
     s_PendingHmiMode = G_FLOW_MODE_NONE;
@@ -166,7 +183,7 @@ void GSignalFlow_Init(void)
     s_MeasurementEnabled = 0U;
     s_HmiReadyPending = 0U;
     s_SerialStreamEnabled = 0U;
-    s_HalfMvQuantizationEnabled = 1U;
+    s_HalfMvQuantizationEnabled = 0U;
     s_TimeFundamentalHz = 0.0f;
     s_HmiBusyUntilTick = 0UL;
     s_LastStartEventTick = HAL_GetTick() - G_FLOW_BUTTON_DEBOUNCE_MS;
@@ -175,9 +192,12 @@ void GSignalFlow_Init(void)
     s_LastRangeEventTick = HAL_GetTick() - G_FLOW_BUTTON_DEBOUNCE_MS;
     s_WaveDisplayPoints = 0U;
     s_SpectrumDisplayPoints = 0U;
+    s_HfMedianActive = 0U;
+    s_HfMedianCount = 0U;
+    s_HfMedianStartTick = 0UL;
 
-    /* 半毫伏幅值取整默认开启，Vpp/Vrms硬件随机微调同步开启。 */
-    GHardwareRandom_Enable();
+    /* 精密测量默认保留原生浮点幅值，不取整也不添加随机量。 */
+    GHardwareRandom_Disable();
 
     TjcHmi_Init();
 
@@ -292,6 +312,8 @@ void GSignalFlow_Process(void)
 
     if (s_State == G_FLOW_STATE_WAIT_ANALYSIS)
     {
+        uint8_t use_hf_median;
+
         if (SpectrumAnalyzer_Run(s_CaptureFrame, &s_Result) == 0U)
         {
             if (s_Result.status == SPECTRUM_STATUS_NO_SIGNAL)
@@ -314,9 +336,54 @@ void GSignalFlow_Process(void)
             return;
         }
 
+        if (GMeasurement_Convert(&s_Result,
+                                 GMeasurementCalibration_Get(),
+                                 &s_Measurement) == 0U)
+        {
+            GSignalFlow_AbortCycle("measurement", "CALC ERR");
+            return;
+        }
+
+        use_hf_median =
+            ((s_ActiveMeasurementMode != G_FLOW_MODE_SERIAL_STREAM) &&
+             ((s_HfMedianActive != 0U) ||
+              (GSignalFlow_ShouldUseHfMedian(&s_Measurement) != 0U)))
+                ? 1U : 0U;
+
+        if (use_hf_median != 0U)
+        {
+            if ((s_HfMedianActive == 0U) ||
+                (GSignalFlow_HfMedianCompatible(&s_Measurement) == 0U))
+            {
+                s_HfMedianActive = 1U;
+                s_HfMedianCount = 0U;
+                s_HfMedianStartTick = s_CycleStartTick;
+            }
+
+            GSignalFlow_StoreHfMedianFrame(&s_Measurement);
+            if (s_HfMedianCount < G_FLOW_HF_MEDIAN_FRAMES)
+            {
+                if (Fpga_StartCapture(0U) == 0U)
+                {
+                    GSignalFlow_AbortCycle("average_start", "AVG ERR");
+                    return;
+                }
+                s_CycleStartTick = HAL_GetTick();
+                s_State = G_FLOW_STATE_WAIT_ANALYSIS;
+                s_NextActionTick =
+                    s_CycleStartTick + G_FLOW_STATUS_POLL_MS;
+                return;
+            }
+
+            GSignalFlow_FinalizeHfMedian();
+        }
+
         s_ActiveSequence = s_ReportSequence;
         s_ReportSequence++;
-        s_AnalysisElapsedMs = HAL_GetTick() - s_CycleStartTick;
+        s_AnalysisElapsedMs =
+            (use_hf_median != 0U)
+                ? (HAL_GetTick() - s_HfMedianStartTick)
+                : (HAL_GetTick() - s_CycleStartTick);
         GSignalFlow_SendResult();
         if (GSignalFlow_SendMeasurement() == 0U)
         {
@@ -401,6 +468,9 @@ static void GSignalFlow_StartOrRetry(uint32_t now)
 
     memset(&s_Result, 0, sizeof(s_Result));
     memset(&s_Measurement, 0, sizeof(s_Measurement));
+    s_HfMedianActive = 0U;
+    s_HfMedianCount = 0U;
+    s_HfMedianStartTick = now;
     if (s_ActiveMeasurementMode == G_FLOW_MODE_TIME)
     {
         memset(&s_Waveform, 0, sizeof(s_Waveform));
@@ -923,9 +993,7 @@ static uint8_t GSignalFlow_SendMeasurement(void)
     int written;
     uint8_t component;
 
-    if (GMeasurement_Convert(&s_Result,
-                             GMeasurementCalibration_Get(),
-                             &s_Measurement) == 0U)
+    if (s_Measurement.valid == 0U)
     {
         (void)snprintf(buffer,
                        sizeof(buffer),
@@ -1014,6 +1082,166 @@ static uint8_t GSignalFlow_SendMeasurement(void)
 
     GSignalFlow_SendText(buffer);
     return 1U;
+}
+
+static uint8_t GSignalFlow_ShouldUseHfMedian(
+    const GMeasurementResult *measurement)
+{
+    uint8_t component;
+
+    if ((measurement == NULL) ||
+        (measurement->valid == 0U) ||
+        (measurement->component_count == 0U))
+    {
+        return 0U;
+    }
+
+    for (component = 0U;
+         component < measurement->component_count;
+         component++)
+    {
+        const GMeasurementComponent *item =
+            &measurement->components[component];
+
+        if ((item->frequency_hz >= G_FLOW_HF_MEDIAN_MIN_HZ) &&
+            (item->amplitude_mv <= G_FLOW_HF_MEDIAN_MAX_PEAK_MV))
+        {
+            return 1U;
+        }
+    }
+
+    return 0U;
+}
+
+static uint8_t GSignalFlow_HfMedianCompatible(
+    const GMeasurementResult *measurement)
+{
+    const GMeasurementResult *reference;
+    uint8_t component;
+
+    if ((measurement == NULL) ||
+        (s_HfMedianCount == 0U))
+    {
+        return 1U;
+    }
+
+    reference = &s_HfMedianFrames[0];
+    if (measurement->component_count != reference->component_count)
+    {
+        return 0U;
+    }
+    if ((measurement->fundamental_hz - reference->fundamental_hz >
+         G_FLOW_HF_MEDIAN_FREQ_TOL_HZ) ||
+        (reference->fundamental_hz - measurement->fundamental_hz >
+         G_FLOW_HF_MEDIAN_FREQ_TOL_HZ))
+    {
+        return 0U;
+    }
+
+    for (component = 0U;
+         component < measurement->component_count;
+         component++)
+    {
+        if (measurement->components[component].harmonic !=
+            reference->components[component].harmonic)
+        {
+            return 0U;
+        }
+    }
+
+    return 1U;
+}
+
+static void GSignalFlow_StoreHfMedianFrame(
+    const GMeasurementResult *measurement)
+{
+    if ((measurement == NULL) ||
+        (s_HfMedianCount >= G_FLOW_HF_MEDIAN_FRAMES))
+    {
+        return;
+    }
+
+    s_HfMedianFrames[s_HfMedianCount] = *measurement;
+    s_HfMedianCount++;
+}
+
+static void GSignalFlow_FinalizeHfMedian(void)
+{
+    float values[G_FLOW_HF_MEDIAN_FRAMES];
+    uint8_t component;
+    uint8_t frame;
+
+    if (s_HfMedianCount != G_FLOW_HF_MEDIAN_FRAMES)
+    {
+        return;
+    }
+
+    s_Measurement = s_HfMedianFrames[G_FLOW_HF_MEDIAN_FRAMES - 1U];
+
+    for (frame = 0U; frame < G_FLOW_HF_MEDIAN_FRAMES; frame++)
+    {
+        values[frame] = s_HfMedianFrames[frame].fundamental_hz;
+    }
+    s_Measurement.fundamental_hz = GSignalFlow_Median25(values);
+
+    for (frame = 0U; frame < G_FLOW_HF_MEDIAN_FRAMES; frame++)
+    {
+        values[frame] = s_HfMedianFrames[frame].upp_mv;
+    }
+    s_Measurement.upp_mv = GSignalFlow_Median25(values);
+
+    for (frame = 0U; frame < G_FLOW_HF_MEDIAN_FRAMES; frame++)
+    {
+        values[frame] = s_HfMedianFrames[frame].urms_mv;
+    }
+    s_Measurement.urms_mv = GSignalFlow_Median25(values);
+
+    for (component = 0U;
+         component < s_Measurement.component_count;
+         component++)
+    {
+        for (frame = 0U; frame < G_FLOW_HF_MEDIAN_FRAMES; frame++)
+        {
+            values[frame] =
+                s_HfMedianFrames[frame].components[component].frequency_hz;
+        }
+        s_Measurement.components[component].frequency_hz =
+            GSignalFlow_Median25(values);
+
+        for (frame = 0U; frame < G_FLOW_HF_MEDIAN_FRAMES; frame++)
+        {
+            values[frame] =
+                s_HfMedianFrames[frame].components[component].amplitude_mv;
+        }
+        s_Measurement.components[component].amplitude_mv =
+            GSignalFlow_Median25(values);
+    }
+
+    s_HfMedianActive = 0U;
+    s_HfMedianCount = 0U;
+}
+
+static float GSignalFlow_Median25(const float *values)
+{
+    float sorted[G_FLOW_HF_MEDIAN_FRAMES];
+    uint8_t index;
+
+    memcpy(sorted, values, sizeof(sorted));
+    for (index = 1U; index < G_FLOW_HF_MEDIAN_FRAMES; index++)
+    {
+        float item = sorted[index];
+        uint8_t position = index;
+
+        while ((position > 0U) &&
+               (sorted[position - 1U] > item))
+        {
+            sorted[position] = sorted[position - 1U];
+            position--;
+        }
+        sorted[position] = item;
+    }
+
+    return sorted[G_FLOW_HF_MEDIAN_FRAMES / 2U];
 }
 
 static void GSignalFlow_SendCalibrationTelemetry(void)

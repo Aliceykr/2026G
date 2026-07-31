@@ -291,6 +291,11 @@ static int TestProductionCalibration(void)
         GMeasurementCalibration_Get();
     SpectrumResult spectrum;
     GMeasurementResult measurement;
+    static const double expected_peak_mv[] =
+    {
+         5.0, 10.0, 15.0, 20.0, 25.0,
+        50.0, 75.0, 100.0, 125.0
+    };
     uint8_t index;
     unsigned int verified_nodes = 0U;
 
@@ -330,7 +335,7 @@ static int TestProductionCalibration(void)
         if (!NearlyEqual(row->frequency_hz,
                          10000.0 * (double)(index + 1U),
                          0.01) ||
-            (row->level_count != 5U))
+            (row->level_count != 9U))
         {
             printf("FAIL production 2D row %u\n", (unsigned int)index);
             return 0;
@@ -338,10 +343,8 @@ static int TestProductionCalibration(void)
 
         for (level = 0U; level < row->level_count; level++)
         {
-            const double expected_peak_mv = 25.0 * (double)(level + 1U);
-
             if (!NearlyEqual(row->levels[level].peak_mv,
-                             expected_peak_mv,
+                             expected_peak_mv[level],
                              0.001))
             {
                 printf("FAIL production 2D level %u/%u\n",
@@ -363,10 +366,10 @@ static int TestProductionCalibration(void)
                                       calibration,
                                       &measurement) == 0U) ||
                 !NearlyEqual(measurement.components[0].amplitude_mv,
-                             expected_peak_mv,
+                             expected_peak_mv[level],
                              0.001) ||
                 !NearlyEqual(measurement.upp_mv,
-                             2.0 * expected_peak_mv,
+                             2.0 * expected_peak_mv[level],
                              0.002))
             {
                 printf("FAIL production node %u/%u amp=%.6f upp=%.6f\n",
@@ -398,7 +401,7 @@ static int TestProductionCalibration(void)
     spectrum.components[0].harmonic = 1U;
     spectrum.components[0].frequency_hz = 100000.0f;
     spectrum.components[0].amplitude_codes =
-        calibration->amplitude_rows[9].levels[1].amplitude_codes;
+        calibration->amplitude_rows[9].levels[5].amplitude_codes;
 
     if ((GMeasurement_Convert(&spectrum,
                               calibration,
@@ -412,7 +415,7 @@ static int TestProductionCalibration(void)
         return 0;
     }
 
-    printf("PASS production 50x5 amplitude (%u nodes) and 50-point phase tables\n",
+    printf("PASS production 50x9 amplitude (%u nodes) and 50-point phase tables\n",
            verified_nodes);
     return 1;
 }

@@ -15,7 +15,7 @@
 #define SPECTRUM_MAX_HARMONIC_ORDER 50U
 #define SPECTRUM_MATCH_TOLERANCE_BIN 2.5f
 #define SPECTRUM_NOISE_POWER_FACTOR 4.0f
-#define SPECTRUM_FUNDAMENTAL_MIN_POWER_RATIO 0.01f
+#define SPECTRUM_FUNDAMENTAL_MIN_POWER_RATIO 0.008f
 #define SPECTRUM_RECONSTRUCT_POINTS 2048U
 #define SPECTRUM_INTERFERENCE_ALIAS_HZ 250000.0f
 #define SPECTRUM_INTERFERENCE_MATCH_HZ    250.0f
@@ -578,7 +578,8 @@ static uint8_t SpectrumAnalyzer_SelectHarmonics(const SpectrumPeak *peaks,
     /*
      * Reject weak subharmonic spurs as fundamental candidates.  The required
      * worst case (25 mV fundamental, 125 mV harmonic) still has a 4% power
-     * ratio, so this 1% floor preserves the specified amplitude range.
+     * ratio.  Use a 0.8% floor so a component nominally at the 1% boundary
+     * is not lost to windowing and floating-point estimation error.
      */
     if (threshold < peaks[0].power * SPECTRUM_FUNDAMENTAL_MIN_POWER_RATIO)
     {
