@@ -963,4 +963,5 @@ uint8_t tjc_send_wave(const char *name,
 
     HAL_Delay(TJC_COMMAND_GAP_MS);
     return 1U;
+
 }
