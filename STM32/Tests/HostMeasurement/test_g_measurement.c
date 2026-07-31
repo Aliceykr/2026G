@@ -38,6 +38,7 @@ static double ReconstructExpectedUpp(const SpectrumResult *spectrum,
                 &spectrum->components[component];
 
             value += (double)item->amplitude_codes * mv_per_code *
+                     (double)G_MEASUREMENT_50_OHM_AMPLITUDE_SCALE *
                      cos((double)item->harmonic * phase +
                          (double)item->phase_rad);
         }
@@ -110,13 +111,13 @@ static int TestMeasurementConversion(void)
      * 300 kHz 插值得 0.0159183673；400 kHz 插值得 0.0179591837。
      */
     if (!NearlyEqual(measurement.components[0].amplitude_mv,
-                     11.8367347,
+                     5.91836735,
                      0.002) ||
         !NearlyEqual(measurement.components[1].amplitude_mv,
-                     6.3673469,
+                     3.18367345,
                      0.002) ||
         !NearlyEqual(measurement.components[2].amplitude_mv,
-                     3.5918367,
+                     1.79591835,
                      0.002))
     {
         printf("FAIL conversion interpolation %.5f %.5f %.5f\n",
@@ -127,9 +128,9 @@ static int TestMeasurementConversion(void)
     }
 
     expected_rms =
-        sqrt((11.8367347 * 11.8367347 +
-              6.3673469 * 6.3673469 +
-              3.5918367 * 3.5918367) / 2.0);
+        sqrt((5.91836735 * 5.91836735 +
+              3.18367345 * 3.18367345 +
+              1.79591835 * 1.79591835) / 2.0);
     if (!NearlyEqual(measurement.urms_mv, expected_rms, 0.003))
     {
         printf("FAIL conversion rms actual=%.6f expected=%.6f\n",
@@ -272,7 +273,8 @@ static int TestProductionCalibration(void)
                               calibration,
                               &measurement) == 0U) ||
         !NearlyEqual(measurement.components[0].amplitude_mv,
-                     1000.0 * expected_scale_150k,
+                     1000.0 * expected_scale_150k *
+                         G_MEASUREMENT_50_OHM_AMPLITUDE_SCALE,
                      0.002))
     {
         printf("FAIL production calibration interpolation\n");
@@ -520,8 +522,10 @@ static int TestEndToEndMvLimits(void)
     };
     SpectrumResult spectrum;
     GMeasurementResult measurement;
-    double expected_rms = sqrt((80.0 * 80.0 + 30.0 * 30.0) / 2.0);
-    double expected_upp = ExpectedPhysicalUpp();
+    double expected_rms =
+        sqrt((40.0 * 40.0 + 15.0 * 15.0) / 2.0);
+    double expected_upp =
+        ExpectedPhysicalUpp() * G_MEASUREMENT_50_OHM_AMPLITUDE_SCALE;
     unsigned int index;
 
     for (index = 0U; index < TEST_FRAME_LENGTH; index++)
@@ -555,9 +559,9 @@ static int TestEndToEndMvLimits(void)
         (spectrum.components[0].harmonic != 1U) ||
         (spectrum.components[1].harmonic != 5U) ||
         (fabs((double)spectrum.fundamental_hz - 100000.0) > 1000.0) ||
-        (fabs((double)measurement.components[0].amplitude_mv - 80.0) >
+        (fabs((double)measurement.components[0].amplitude_mv - 40.0) >
          5.0) ||
-        (fabs((double)measurement.components[1].amplitude_mv - 30.0) >
+        (fabs((double)measurement.components[1].amplitude_mv - 15.0) >
          5.0) ||
         (fabs((double)measurement.urms_mv - expected_rms) > 5.0) ||
         (fabs((double)measurement.upp_mv - expected_upp) > 5.0))
@@ -574,8 +578,8 @@ static int TestEndToEndMvLimits(void)
     printf("PASS end-to-end absolute limits f0err=%.2fHz "
            "h1err=%.3fmV h5err=%.3fmV rmserr=%.3fmV upperr=%.3fmV\n",
            fabs((double)spectrum.fundamental_hz - 100000.0),
-           fabs((double)measurement.components[0].amplitude_mv - 80.0),
-           fabs((double)measurement.components[1].amplitude_mv - 30.0),
+           fabs((double)measurement.components[0].amplitude_mv - 40.0),
+           fabs((double)measurement.components[1].amplitude_mv - 15.0),
            fabs((double)measurement.urms_mv - expected_rms),
            fabs((double)measurement.upp_mv - expected_upp));
     return 1;

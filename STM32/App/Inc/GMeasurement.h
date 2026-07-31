@@ -12,6 +12,17 @@ extern "C" {
 #define G_MEASUREMENT_WAVEFORM_SAMPLE_RATE_HZ  5000000.0f
 #define G_MEASUREMENT_WAVEFORM_POINTS          256U
 
+/*
+ * 50 ohm信号源幅值换算。
+ * 设为0可恢复原High-Z换算路径；当前启用后，最多三个有效谐波分量
+ * 先统一除以2，再用于幅值显示、Vrms和Vpp重建。
+ */
+#ifndef G_MEASUREMENT_ENABLE_50_OHM_SCALE
+#define G_MEASUREMENT_ENABLE_50_OHM_SCALE       1U
+#endif
+
+#define G_MEASUREMENT_50_OHM_AMPLITUDE_SCALE    0.5f
+
 typedef struct
 {
     float frequency_hz;

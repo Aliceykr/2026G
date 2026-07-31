@@ -55,7 +55,15 @@ uint8_t GMeasurement_Convert(const SpectrumResult *spectrum,
 
         output->harmonic = input->harmonic;
         output->frequency_hz = input->frequency_hz;
+#if G_MEASUREMENT_ENABLE_50_OHM_SCALE
+        output->amplitude_mv =
+            input->amplitude_codes *
+            mv_per_code *
+            G_MEASUREMENT_50_OHM_AMPLITUDE_SCALE;
+#else
+        /* 保留原High-Z幅值换算路径。 */
         output->amplitude_mv = input->amplitude_codes * mv_per_code;
+#endif
         output->phase_rad = input->phase_rad;
         sum_square += output->amplitude_mv * output->amplitude_mv;
     }
