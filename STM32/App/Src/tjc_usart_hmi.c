@@ -56,17 +56,18 @@
 #define TJC_UART_TIMEOUT_MS             1000U
 #define TJC_START_LABEL_DELAY_MS        2000U
 #define TJC_START_LABEL_RETRY_MS        2000U
-#define TJC_ADDT_READY_DELAY_MS         10U
 #define TJC_COMMAND_GAP_MS              2U
 #define TJC_NUMERIC_RESPONSE_TIMEOUT_MS 50U
+#define TJC_ADDT_RESPONSE_TIMEOUT_MS    100U
 
 /*
  * 串口屏工程使用GB2312编码，不能直接依赖C源文件的UTF-8中文编码。
- * BF AA CA BC B2 E2 C1 BF = “开始测量”
+ * CA B1 D3 F2 B2 E2 C1 BF = “时域测量”
  * C7 D0 BB BB D6 DC C6 DA = “切换周期”
  */
-#define TJC_START_LABEL_GB2312   "\xBF\xAA\xCA\xBC\xB2\xE2\xC1\xBF"
+#define TJC_TIME_LABEL_GB2312    "\xCA\xB1\xD3\xF2\xB2\xE2\xC1\xBF"
 #define TJC_TOGGLE_LABEL_GB2312  "\xC7\xD0\xBB\xBB\xD6\xDC\xC6\xDA"
+#define TJC_FREQUENCY_LABEL_GB2312 "\xC6\xB5\xD3\xF2\xB2\xE2\xC1\xBF"
 #define TJC_COMPUTING_TEXT       "BUSY"
 #define TJC_READY_TEXT           "READY"
 
@@ -90,6 +91,10 @@ static uint8_t s_PendingCycles;    /**< 延迟事件携带的周期参数。 */
 
 /* 通用淘晶驰命令格式化缓冲区。所有调用都位于主循环，故不需要加锁。 */
 char str1[TJC_TEXT_BUFFER_LENGTH];
+
+static uint8_t TjcHmi_ParseEventByte(uint8_t byte,
+                                    TjcHmiEvent *event,
+                                    uint8_t *cycles);
 
 /**
  * @brief 使用模块私有UART4阻塞发送一段数据。
@@ -209,6 +214,60 @@ static uint8_t TjcHmi_ReadByte(uint8_t *byte)
     return 1U;
 }
 
+/* 等待淘晶驰透明传输应答：code FF FF FF，同时保留期间收到的按键事件。 */
+static uint8_t TjcHmi_WaitTransparentResponse(uint8_t code)
+{
+    uint8_t matched = 0U;
+    uint32_t deadline = HAL_GetTick() + TJC_ADDT_RESPONSE_TIMEOUT_MS;
+
+    while ((int32_t)(HAL_GetTick() - deadline) < 0)
+    {
+        uint8_t byte;
+
+        while (TjcHmi_ReadByte(&byte) != 0U)
+        {
+            if (matched == 0U)
+            {
+                if (byte == code)
+                {
+                    matched = 1U;
+                }
+                else
+                {
+                    TjcHmiEvent event = TJC_HMI_EVENT_NONE;
+                    uint8_t cycles = 0U;
+
+                    if ((TjcHmi_ParseEventByte(byte,
+                                               &event,
+                                               &cycles) != 0U) &&
+                        (s_PendingEvent == TJC_HMI_EVENT_NONE))
+                    {
+                        s_PendingEvent = event;
+                        s_PendingCycles = cycles;
+                    }
+                }
+                continue;
+            }
+
+            if (byte == 0xFFU)
+            {
+                matched++;
+                if (matched == 4U)
+                {
+                    return 1U;
+                }
+                continue;
+            }
+
+            matched = (byte == code) ? 1U : 0U;
+        }
+
+        HAL_Delay(1U);
+    }
+
+    return 0U;
+}
+
 /** @brief 发送每条淘晶驰ASCII指令必须携带的FF FF FF结束符。 */
 static void TjcHmi_SendTerminator(void)
 {
@@ -221,7 +280,8 @@ static void TjcHmi_SendTerminator(void)
  * @brief 周期刷新按钮文字。
  *
  * 7寸屏上电通常慢于STM32，所以不能只在MCU初始化瞬间发送一次。该函数
- * 首次延迟2秒，之后每2秒重发；即使早期命令丢失，屏幕就绪后也会恢复。
+ * 首次延迟2秒，之后每2秒重发b0/b1/b2文字；即使早期命令丢失，屏幕
+ * 就绪后也会恢复。
  */
 static void TjcHmi_UpdateButtonText(void)
 {
@@ -233,8 +293,9 @@ static void TjcHmi_UpdateButtonText(void)
         return;
     }
 
-    tjc_send_txt("page0.b0", "txt", TJC_START_LABEL_GB2312);
+    tjc_send_txt("page0.b0", "txt", TJC_TIME_LABEL_GB2312);
     tjc_send_txt("page0.b1", "txt", TJC_TOGGLE_LABEL_GB2312);
+    tjc_send_txt("page0.b2", "txt", TJC_FREQUENCY_LABEL_GB2312);
     s_NextStartLabelTick = now + TJC_START_LABEL_RETRY_MS;
 }
 
@@ -244,8 +305,9 @@ static void TjcHmi_UpdateButtonText(void)
  * @return 帧格式和命令号均有效返回1，否则返回0。
  *
  * 页面弹起事件协议：
- *   55 01 00 00 FF FF FF -> b0，开始测量
+ *   55 01 00 00 FF FF FF -> b0，时域测量
  *   55 02 00 00 FF FF FF -> b1，切换1/3周期
+ *   55 03 00 00 FF FF FF -> b2，频域测量
  */
 static uint8_t TjcHmi_DecodeFrame(TjcHmiEvent *event)
 {
@@ -268,6 +330,12 @@ static uint8_t TjcHmi_DecodeFrame(TjcHmiEvent *event)
     if (s_RxFrame[1] == TJC_BUTTON_TOGGLE_CYCLES)
     {
         *event = TJC_HMI_EVENT_TOGGLE_CYCLES;
+        return 1U;
+    }
+
+    if (s_RxFrame[1] == TJC_BUTTON_FREQUENCY)
+    {
+        *event = TJC_HMI_EVENT_FREQUENCY_MEASUREMENT;
         return 1U;
     }
 
@@ -348,7 +416,7 @@ void TjcHmi_Init(void)
 
 /**
  * @brief 在主循环中解析一条屏幕事件。
- * @param event 输出开始测量、切换周期或直接设置周期事件。
+ * @param event 输出时域测量、频域测量、切换周期或直接设置周期事件。
  * @param cycles 仅TJC_HMI_EVENT_SET_CYCLES时输出1或3。
  * @return 解析到一条完整事件返回1，当前无完整事件返回0。
  *
@@ -558,7 +626,7 @@ uint8_t TjcHmi_GetComponentWidth(const char *name, uint16_t *width)
  * @param attribute 字符串属性名，通常为"txt"。
  * @param txt 新文本内容；中文必须使用屏幕字库对应的GB2312字节。
  *
- * 生成示例：page0.b0.txt="开始测量" + FF FF FF。
+ * 生成示例：page0.b0.txt="时域测量" + FF FF FF。
  */
 void tjc_send_txt(const char *objname,
                   const char *attribute,
@@ -842,29 +910,30 @@ void printf_wave(UART_HandleTypeDef *uart_handle,
  * @param name 波形控件ID表达式，例如"s0.id"。
  * @param ch 波形通道号。
  * @param data 已缩放为0~254的原始纵坐标数组。
- * @param count 数据点数量，本工程固定为256。
+ * @param count 数据点数量，当前按波形控件实际宽度发送。
  *
  * 发送时序：
  *   addt s0.id,0,256 + FF FF FF
- *   等待10ms让屏幕返回FE FF FF FF并进入透明数据接收状态
+ *   等待屏幕返回FE FF FF FF并进入透明数据接收状态
  *   连续发送256个原始字节
  *
  * 注意data阶段不是ASCII文本，不得使用strlen，也不能逐点添加引号或逗号。
  * addt按count自动结束透明传输，原始数据后不能再追加FF FF FF，否则这些
- * 字节会被屏幕当作下一条空指令。屏幕返回的FE/FD应答由接收解析器当作
- * 非按键字节跳过，不影响55开头的b0/b1事件。
+ * 字节会被屏幕当作下一条空指令。发送前必须收到FE就绪应答，发送后必须
+ * 收到FD完成应答；等待期间收到的b0/b1/b2事件会暂存并交给业务层。
  * 921600波特率下256点约需2.8ms，底层仍保留1000ms容错超时。
+ * @return FE/FD握手和原始数据发送全部成功返回1，否则返回0。
  */
-void tjc_send_wave(const char *name,
-                   int ch,
-                   const uint8_t *data,
-                   uint16_t count)
+uint8_t tjc_send_wave(const char *name,
+                      int ch,
+                      const uint8_t *data,
+                      uint16_t count)
 {
     int written;
 
     if ((name == NULL) || (data == NULL) || (count == 0U))
     {
-        return;
+        return 0U;
     }
 
     written = snprintf(str1,
@@ -875,12 +944,23 @@ void tjc_send_wave(const char *name,
                        (unsigned int)count);
     if ((written <= 0) || ((size_t)written >= sizeof(str1)))
     {
-        return;
+        return 0U;
     }
 
     tjc_send_string(str1);
-    HAL_Delay(TJC_ADDT_READY_DELAY_MS);
-    (void)TjcHmi_Send(data, count);
-    /* 给屏幕透明传输状态留出退出时间，避免吞掉下一条绘图指令。 */
+    if (TjcHmi_WaitTransparentResponse(0xFEU) == 0U)
+    {
+        return 0U;
+    }
+    if (TjcHmi_Send(data, count) == 0U)
+    {
+        return 0U;
+    }
+    if (TjcHmi_WaitTransparentResponse(0xFDU) == 0U)
+    {
+        return 0U;
+    }
+
     HAL_Delay(TJC_COMMAND_GAP_MS);
+    return 1U;
 }

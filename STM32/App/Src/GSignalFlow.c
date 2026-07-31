@@ -15,7 +15,6 @@
 #define G_FLOW_RESPONSE_LIMIT_MS    2000U
 #define G_FLOW_ASCII_DEBUG_ENABLED   1U
 #define G_FLOW_HMI_IDLE_REFRESH_MS  2000U
-#define G_FLOW_HMI_MEASUREMENT_FIELDS 6U
 #define G_FLOW_HMI_BUSY_MIN_MS        300U
 #define G_FLOW_CAPTURE_TIMEOUT_MS     2000U
 #define G_FLOW_WAVE_HEIGHT_DIVISOR    3U
@@ -40,11 +39,20 @@ typedef enum
     G_FLOW_STATE_HOLD
 } GFlowState;
 
+typedef enum
+{
+    G_FLOW_MODE_NONE = 0,
+    G_FLOW_MODE_TIME,
+    G_FLOW_MODE_FREQUENCY
+} GFlowMeasurementMode;
+
 static int16_t s_CaptureFrame[SPECTRUM_FRAME_LENGTH];
+static int16_t s_WaveCaptureFrame[SPECTRUM_FRAME_LENGTH];
 static SpectrumResult s_Result;
 static GMeasurementResult s_Measurement;
 static GMeasurementWaveform s_Waveform;
 static GFlowState s_State;
+static GFlowMeasurementMode s_ActiveMeasurementMode;
 static uint32_t s_NextActionTick;
 static uint32_t s_ReportSequence;
 static uint32_t s_ActiveSequence;
@@ -58,12 +66,12 @@ static uint8_t s_ActiveWaveformCycles;
 static uint8_t s_CycleChangePending;
 static uint8_t s_WaveFrameValid;
 static uint8_t s_MeasurementEnabled;
-static uint8_t s_HmiMeasurementField;
-static uint8_t s_HmiMeasurementPending;
 static uint8_t s_HmiReadyPending;
+static float s_TimeFundamentalHz;
 static uint32_t s_HmiBusyUntilTick;
 static uint32_t s_LastStartEventTick;
 static uint32_t s_LastCycleEventTick;
+static uint32_t s_LastFrequencyEventTick;
 static uint16_t s_WaveDisplayPoints;
 static uint8_t s_WaveDisplay[G_FLOW_WAVE_MAX_POINTS];
 static uint16_t s_SpectrumDisplayPoints;
@@ -85,24 +93,29 @@ static void GSignalFlow_AbortCycle(const char *stage,
                                   const char *hmi_status);
 static void GSignalFlow_HandleCommand(void);
 static void GSignalFlow_UpdateHmiPlaceholders(void);
-static void GSignalFlow_QueueHmiMeasurement(void);
+static void GSignalFlow_UpdateHmiTimePlaceholders(void);
+static void GSignalFlow_UpdateHmiFrequencyPlaceholders(void);
+static void GSignalFlow_UpdateHmiTimeMeasurement(void);
+static void GSignalFlow_UpdateHmiFrequencyMeasurement(void);
 static void GSignalFlow_ServiceHmiMeasurement(void);
 static void GSignalFlow_UpdateHmiMeasurementField(uint8_t field);
 static void GSignalFlow_UpdateHmiNoSignal(void);
 static uint8_t GSignalFlow_UpdateHmiSpectrum(uint8_t signal_valid);
 static uint8_t GSignalFlow_BuildQualitativeSpectrum(uint16_t point_count);
-static void GSignalFlow_UpdateHmiWaveform(void);
+static uint8_t GSignalFlow_UpdateHmiWaveform(void);
 static uint8_t GSignalFlow_BuildAndDisplayWaveform(uint8_t cycles);
 
 void GSignalFlow_Init(void)
 {
     memset(s_CaptureFrame, 0, sizeof(s_CaptureFrame));
+    memset(s_WaveCaptureFrame, 0, sizeof(s_WaveCaptureFrame));
     memset(&s_Result, 0, sizeof(s_Result));
     memset(&s_Measurement, 0, sizeof(s_Measurement));
     memset(&s_Waveform, 0, sizeof(s_Waveform));
     memset(s_WaveDisplay, 0, sizeof(s_WaveDisplay));
     memset(s_SpectrumDisplay, 0, sizeof(s_SpectrumDisplay));
     s_State = G_FLOW_STATE_IDLE;
+    s_ActiveMeasurementMode = G_FLOW_MODE_NONE;
     s_NextActionTick = HAL_GetTick();
     s_ReportSequence = 0UL;
     s_ActiveSequence = 0UL;
@@ -115,12 +128,12 @@ void GSignalFlow_Init(void)
     s_CycleChangePending = 0U;
     s_WaveFrameValid = 0U;
     s_MeasurementEnabled = 0U;
-    s_HmiMeasurementField = 0U;
-    s_HmiMeasurementPending = 0U;
     s_HmiReadyPending = 0U;
+    s_TimeFundamentalHz = 0.0f;
     s_HmiBusyUntilTick = 0UL;
     s_LastStartEventTick = HAL_GetTick() - G_FLOW_BUTTON_DEBOUNCE_MS;
     s_LastCycleEventTick = HAL_GetTick() - G_FLOW_BUTTON_DEBOUNCE_MS;
+    s_LastFrequencyEventTick = HAL_GetTick() - G_FLOW_BUTTON_DEBOUNCE_MS;
     s_WaveDisplayPoints = 0U;
     s_SpectrumDisplayPoints = 0U;
 
@@ -141,7 +154,7 @@ void GSignalFlow_Process(void)
     if (s_State == G_FLOW_STATE_IDLE)
     {
         /*
-         * 屏幕上电通常慢于MCU。开始测量前每2秒重发一次XXX占位文字，
+         * 屏幕上电通常慢于MCU。首次测量前每2秒重发一次XXX占位文字，
          * 避免第一次命令发送过早后仍显示工程里的默认newtxt。
          */
         if ((int32_t)(now - s_NextIdleHmiTextTick) >= 0)
@@ -160,7 +173,7 @@ void GSignalFlow_Process(void)
         return;
     }
 
-    /* 单次测量完成后保持本轮结果，直到再次按下“开始测量”。 */
+    /* 单次测量完成后保持本轮结果，直到再次按下测量按钮。 */
     if (s_State == G_FLOW_STATE_HOLD)
     {
         return;
@@ -205,7 +218,10 @@ void GSignalFlow_Process(void)
         }
     }
 
-    if (Fpga_ReadCaptureFrame(s_CaptureFrame, SPECTRUM_FRAME_LENGTH) == 0U)
+    if (Fpga_ReadCaptureFrame(
+            (s_State == G_FLOW_STATE_WAIT_WAVEFORM)
+                ? s_WaveCaptureFrame : s_CaptureFrame,
+            SPECTRUM_FRAME_LENGTH) == 0U)
     {
         GSignalFlow_AbortCycle("frame", "FRAME ERR");
         return;
@@ -235,13 +251,23 @@ void GSignalFlow_Process(void)
         s_ActiveSequence = s_ReportSequence;
         s_ReportSequence++;
         s_AnalysisElapsedMs = HAL_GetTick() - s_CycleStartTick;
-        (void)GSignalFlow_UpdateHmiSpectrum(1U);
         GSignalFlow_SendResult();
         if (GSignalFlow_SendMeasurement() == 0U)
         {
             GSignalFlow_AbortCycle("measurement", "CALC ERR");
             return;
         }
+
+        if (s_ActiveMeasurementMode == G_FLOW_MODE_FREQUENCY)
+        {
+            GSignalFlow_UpdateHmiFrequencyMeasurement();
+            (void)GSignalFlow_UpdateHmiSpectrum(1U);
+            GSignalFlow_FinishCycle(HAL_GetTick());
+            return;
+        }
+
+        GSignalFlow_UpdateHmiTimeMeasurement();
+        s_TimeFundamentalHz = s_Result.fundamental_hz;
 
         if (Fpga_StartCapture(1U) == 0U)
         {
@@ -256,7 +282,6 @@ void GSignalFlow_Process(void)
 
     if (s_State == G_FLOW_STATE_WAIT_WAVEFORM)
     {
-        s_WaveFrameValid = 1U;
         if (s_CycleChangePending != 0U)
         {
             s_ActiveWaveformCycles = s_SelectedWaveformCycles;
@@ -270,7 +295,7 @@ void GSignalFlow_Process(void)
             return;
         }
 
-        GSignalFlow_UpdateHmiWaveform();
+        s_WaveFrameValid = 1U;
         GSignalFlow_FinishCycle(HAL_GetTick());
         return;
     }
@@ -303,8 +328,12 @@ static void GSignalFlow_StartOrRetry(uint32_t now)
 
     memset(&s_Result, 0, sizeof(s_Result));
     memset(&s_Measurement, 0, sizeof(s_Measurement));
-    memset(&s_Waveform, 0, sizeof(s_Waveform));
-    s_WaveFrameValid = 0U;
+    if (s_ActiveMeasurementMode == G_FLOW_MODE_TIME)
+    {
+        memset(&s_Waveform, 0, sizeof(s_Waveform));
+        s_WaveFrameValid = 0U;
+        s_TimeFundamentalHz = 0.0f;
+    }
     s_CycleStartTick = now;
     s_State = G_FLOW_STATE_WAIT_ANALYSIS;
     s_NextActionTick = now + G_FLOW_STATUS_POLL_MS;
@@ -323,10 +352,13 @@ static void GSignalFlow_AbortCycle(const char *stage,
 {
     GSignalFlow_SendError(stage);
     s_MeasurementEnabled = 0U;
-    s_HmiMeasurementPending = 0U;
-    s_HmiReadyPending = 0U;
     s_State = G_FLOW_STATE_HOLD;
-    TjcHmi_SetStatusText(hmi_status);
+    if ((s_ActiveMeasurementMode != G_FLOW_MODE_NONE) &&
+        (hmi_status != NULL))
+    {
+        s_HmiReadyPending = 0U;
+        TjcHmi_SetStatusText(hmi_status);
+    }
 }
 
 static void GSignalFlow_HandleCommand(void)
@@ -351,24 +383,54 @@ static void GSignalFlow_HandleCommand(void)
         }
         s_LastStartEventTick = now;
 
-        /* 测量中重复开始直接忽略，不重置状态、不重启FPGA采集。 */
+        /* FPGA采集链一次只执行一个任务，忙时不打断当前任务。 */
         if ((s_State != G_FLOW_STATE_IDLE) &&
             (s_State != G_FLOW_STATE_HOLD))
         {
-            GSignalFlow_SendText("G_HMI,event=start,ignored=busy\r\n");
+            GSignalFlow_SendText("G_HMI,event=time,ignored=busy\r\n");
             return;
         }
 
-        GSignalFlow_SendText("G_HMI,event=start\r\n");
+        GSignalFlow_SendText("G_HMI,event=time\r\n");
+        s_ActiveMeasurementMode = G_FLOW_MODE_TIME;
         TjcHmi_SetComputeBusy(1U);
         s_HmiBusyUntilTick = now + G_FLOW_HMI_BUSY_MIN_MS;
-        s_HmiReadyPending = 1U;
+        s_HmiReadyPending = 0U;
         s_MeasurementEnabled = 1U;
-        s_HmiMeasurementPending = 0U;
         s_ActiveWaveformCycles = s_SelectedWaveformCycles;
         s_CycleChangePending = 0U;
-        s_WaveFrameValid = 0U;
-        /* 新一轮开始立即移除上一轮频谱，结果有效后再重新绘制。 */
+        GSignalFlow_UpdateHmiTimePlaceholders();
+        tjc_clear_wave("s0.id", 0);
+        tjc_send_string("ref s0");
+        s_State = G_FLOW_STATE_WAIT_RESTART;
+        s_NextActionTick = now;
+        return;
+    }
+
+    if (event == TJC_HMI_EVENT_FREQUENCY_MEASUREMENT)
+    {
+        if ((uint32_t)(now - s_LastFrequencyEventTick) <
+            G_FLOW_BUTTON_DEBOUNCE_MS)
+        {
+            return;
+        }
+        s_LastFrequencyEventTick = now;
+
+        if ((s_State != G_FLOW_STATE_IDLE) &&
+            (s_State != G_FLOW_STATE_HOLD))
+        {
+            GSignalFlow_SendText(
+                "G_HMI,event=frequency,ignored=busy\r\n");
+            return;
+        }
+
+        GSignalFlow_SendText("G_HMI,event=frequency\r\n");
+        s_ActiveMeasurementMode = G_FLOW_MODE_FREQUENCY;
+        TjcHmi_SetComputeBusy(1U);
+        s_HmiBusyUntilTick = now + G_FLOW_HMI_BUSY_MIN_MS;
+        s_HmiReadyPending = 0U;
+        s_MeasurementEnabled = 1U;
+        GSignalFlow_UpdateHmiFrequencyPlaceholders();
         (void)GSignalFlow_UpdateHmiSpectrum(0U);
         s_State = G_FLOW_STATE_WAIT_RESTART;
         s_NextActionTick = now;
@@ -399,29 +461,26 @@ static void GSignalFlow_HandleCommand(void)
             return;
         }
 
-        if ((s_State == G_FLOW_STATE_WAIT_RESTART) ||
-            (s_State == G_FLOW_STATE_WAIT_ANALYSIS) ||
-            (s_State == G_FLOW_STATE_WAIT_WAVEFORM))
+        if ((s_ActiveMeasurementMode == G_FLOW_MODE_TIME) &&
+            ((s_State == G_FLOW_STATE_WAIT_RESTART) ||
+             (s_State == G_FLOW_STATE_WAIT_ANALYSIS) ||
+             (s_State == G_FLOW_STATE_WAIT_WAVEFORM)))
         {
-            /* 本轮采集不中断，在波形生成前一次性提交最新周期选择。 */
+            /* b0时域任务中只排队更新s0，不影响任何频域显示。 */
             s_CycleChangePending = 1U;
             apply_mode = "queued";
         }
-        else if ((s_State == G_FLOW_STATE_HOLD) &&
-                 (s_WaveFrameValid != 0U))
+        else if (s_WaveFrameValid != 0U)
         {
-            /* 使用最近一次5MSPS帧重画，不重新启动FPGA。 */
+            /* 始终使用最近一次b0缓存的5MSPS帧，只重画s0。 */
             s_ActiveWaveformCycles = s_SelectedWaveformCycles;
-            TjcHmi_SetComputeBusy(1U);
             if (GSignalFlow_BuildAndDisplayWaveform(
                     s_ActiveWaveformCycles) != 0U)
             {
-                TjcHmi_SetComputeBusy(0U);
                 apply_mode = "redraw";
             }
             else
             {
-                TjcHmi_SetStatusText("WAVE ERR");
                 apply_mode = "error";
             }
         }
@@ -623,8 +682,6 @@ static uint8_t GSignalFlow_SendMeasurement(void)
         return 0U;
     }
 
-    GSignalFlow_QueueHmiMeasurement();
-
     written = snprintf(
         buffer,
         sizeof(buffer),
@@ -685,33 +742,23 @@ static uint8_t GSignalFlow_SendMeasurement(void)
     return 1U;
 }
 
-static void GSignalFlow_QueueHmiMeasurement(void)
+static void GSignalFlow_UpdateHmiTimeMeasurement(void)
 {
-    /* 三个主要参数先立即显示，确保后续波形采集不会拖住Urms。 */
     GSignalFlow_UpdateHmiMeasurementField(0U);
     GSignalFlow_UpdateHmiMeasurementField(1U);
     GSignalFlow_UpdateHmiMeasurementField(2U);
-    s_HmiMeasurementField = 3U;
-    s_HmiMeasurementPending = 1U;
 }
 
-/* 每次主循环最多更新一个文本控件，避免参数集中成批发送。 */
+static void GSignalFlow_UpdateHmiFrequencyMeasurement(void)
+{
+    GSignalFlow_UpdateHmiMeasurementField(3U);
+    GSignalFlow_UpdateHmiMeasurementField(4U);
+    GSignalFlow_UpdateHmiMeasurementField(5U);
+}
+
 static void GSignalFlow_ServiceHmiMeasurement(void)
 {
-    if (s_HmiMeasurementPending != 0U)
-    {
-        GSignalFlow_UpdateHmiMeasurementField(s_HmiMeasurementField);
-        s_HmiMeasurementField++;
-
-        if (s_HmiMeasurementField >= G_FLOW_HMI_MEASUREMENT_FIELDS)
-        {
-            s_HmiMeasurementPending = 0U;
-        }
-        return;
-    }
-
     if ((s_HmiReadyPending != 0U) &&
-        (s_State == G_FLOW_STATE_HOLD) &&
         ((int32_t)(HAL_GetTick() - s_HmiBusyUntilTick) >= 0))
     {
         TjcHmi_SetComputeBusy(0U);
@@ -799,11 +846,21 @@ static void GSignalFlow_UpdateHmiMeasurementField(uint8_t field)
 
 static void GSignalFlow_UpdateHmiPlaceholders(void)
 {
-    uint8_t field;
+    GSignalFlow_UpdateHmiTimePlaceholders();
+    GSignalFlow_UpdateHmiFrequencyPlaceholders();
+}
 
+static void GSignalFlow_UpdateHmiTimePlaceholders(void)
+{
     tjc_send_txt("t0", "txt", "F=XXXHZ");
     tjc_send_txt("t1", "txt", "Vpp=XXX mV");
     tjc_send_txt("t2", "txt", "Vrms=XXX mV");
+}
+
+static void GSignalFlow_UpdateHmiFrequencyPlaceholders(void)
+{
+    uint8_t field;
+
     for (field = 3U; field <= 5U; field++)
     {
         char object_name[3] = {'t', (char)('0' + field), '\0'};
@@ -818,9 +875,17 @@ static void GSignalFlow_UpdateHmiPlaceholders(void)
 
 static void GSignalFlow_UpdateHmiNoSignal(void)
 {
-    s_HmiMeasurementPending = 0U;
-    GSignalFlow_UpdateHmiPlaceholders();
-    (void)GSignalFlow_UpdateHmiSpectrum(0U);
+    if (s_ActiveMeasurementMode == G_FLOW_MODE_TIME)
+    {
+        GSignalFlow_UpdateHmiTimePlaceholders();
+        tjc_clear_wave("s0.id", 0);
+        tjc_send_string("ref s0");
+    }
+    else if (s_ActiveMeasurementMode == G_FLOW_MODE_FREQUENCY)
+    {
+        GSignalFlow_UpdateHmiFrequencyPlaceholders();
+        (void)GSignalFlow_UpdateHmiSpectrum(0U);
+    }
 }
 
 static uint8_t GSignalFlow_UpdateHmiSpectrum(uint8_t signal_valid)
@@ -870,10 +935,13 @@ static uint8_t GSignalFlow_UpdateHmiSpectrum(uint8_t signal_valid)
      */
     tjc_send_string("ref s1");
     tjc_clear_wave("s1.id", 0);
-    tjc_send_wave("s1.id",
-                  0,
-                  s_SpectrumDisplay,
-                  display_points);
+    if (tjc_send_wave("s1.id",
+                      0,
+                      s_SpectrumDisplay,
+                      display_points) == 0U)
+    {
+        return 0U;
+    }
     if (width_ready != 0U)
     {
         return 1U;
@@ -1030,35 +1098,38 @@ static uint8_t GSignalFlow_BuildQualitativeSpectrum(uint16_t point_count)
 static uint8_t GSignalFlow_BuildAndDisplayWaveform(uint8_t cycles)
 {
     if (GMeasurement_BuildWaveform(
-            s_CaptureFrame,
+            s_WaveCaptureFrame,
             SPECTRUM_FRAME_LENGTH,
             G_MEASUREMENT_WAVEFORM_SAMPLE_RATE_HZ,
-            s_Result.fundamental_hz,
+            s_TimeFundamentalHz,
             cycles,
             &s_Waveform) == 0U)
     {
         return 0U;
     }
 
-    GSignalFlow_UpdateHmiWaveform();
-    return 1U;
+    return GSignalFlow_UpdateHmiWaveform();
 }
 
-static void GSignalFlow_UpdateHmiWaveform(void)
+static uint8_t GSignalFlow_UpdateHmiWaveform(void)
 {
     int32_t minimum;
-    int32_t range;
+    int32_t peak;
     uint16_t point;
     uint16_t display_points = s_WaveDisplayPoints;
 
     if ((s_Waveform.valid == 0U) ||
         (s_Waveform.point_count != G_MEASUREMENT_WAVEFORM_POINTS))
     {
-        return;
+        return 0U;
     }
 
     minimum = (int32_t)s_Waveform.minimum_code;
-    range = (int32_t)s_Waveform.maximum_code - minimum;
+    peak = (minimum < 0) ? -minimum : minimum;
+    if ((int32_t)s_Waveform.maximum_code > peak)
+    {
+        peak = (int32_t)s_Waveform.maximum_code;
+    }
 
     if (display_points == 0U)
     {
@@ -1097,14 +1168,20 @@ static void GSignalFlow_UpdateHmiWaveform(void)
              (int32_t)source_remainder) /
             (int32_t)(display_points - 1U);
 
-        if (range <= 0)
+        if (peak <= 0)
         {
-            s_WaveDisplay[point] = G_FLOW_WAVE_VERTICAL_OFFSET;
+            s_WaveDisplay[point] =
+                (uint8_t)(127 / G_FLOW_WAVE_HEIGHT_DIVISOR +
+                          G_FLOW_WAVE_VERTICAL_OFFSET);
         }
         else
         {
-            int32_t centered = interpolated - minimum;
-            int32_t original_height = (centered * 254) / range;
+            /*
+             * 波形数据已去除直流均值，因此以0码为固定中线并按正负峰值
+             * 对称缩放。这样稀疏采样造成的正负峰值轻微不一致不会让屏幕
+             * 中线漂移，1/3高度和+20偏移仍保持原页面布局。
+             */
+            int32_t original_height = 127 + (interpolated * 127) / peak;
             int32_t scaled = original_height /
                              (int32_t)G_FLOW_WAVE_HEIGHT_DIVISOR +
                              (int32_t)G_FLOW_WAVE_VERTICAL_OFFSET;
@@ -1121,11 +1198,25 @@ static void GSignalFlow_UpdateHmiWaveform(void)
         }
     }
 
+    /*
+     * 当前淘晶驰s0的addt显示方向与时间数组索引相反。发送前将整组数据
+     * 左右镜像，使屏幕从左到右对应波形时间从早到晚；只影响s0，不改变
+     * s1频谱方向和1/3周期选择。
+     */
+    for (point = 0U; point < display_points / 2U; point++)
+    {
+        uint16_t mirror = (uint16_t)(display_points - 1U - point);
+        uint8_t temporary = s_WaveDisplay[point];
+
+        s_WaveDisplay[point] = s_WaveDisplay[mirror];
+        s_WaveDisplay[mirror] = temporary;
+    }
+
     tjc_clear_wave("s0.id", 0);
-    tjc_send_wave("s0.id",
-                  0,
-                  s_WaveDisplay,
-                  display_points);
+    return tjc_send_wave("s0.id",
+                         0,
+                         s_WaveDisplay,
+                         display_points);
 }
 
 static uint32_t GSignalFlow_RoundPositive(float value)

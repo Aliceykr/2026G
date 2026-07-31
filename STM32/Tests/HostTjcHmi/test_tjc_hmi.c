@@ -59,6 +59,8 @@ int main(void)
         {0x55U, 0x01U, 0x00U, 0x00U, 0xFFU, 0xFFU, 0xFFU};
     static const uint8_t button_three[] =
         {0x55U, 0x02U, 0x00U, 0x00U, 0xFFU, 0xFFU, 0xFFU};
+    static const uint8_t button_frequency[] =
+        {0x55U, 0x03U, 0x00U, 0x00U, 0xFFU, 0xFFU, 0xFFU};
     static const uint8_t noisy_button_three[] =
         {0x00U, 0xAAU, 0x55U, 0x02U, 0x00U, 0x00U, 0xFFU, 0xFFU, 0xFFU};
     static const uint8_t false_header_then_button[] =
@@ -71,6 +73,11 @@ int main(void)
     static const uint8_t button_during_get[] =
         {0x55U, 0x02U, 0x00U, 0x00U, 0xFFU, 0xFFU, 0xFFU,
          0x71U, 0x00U, 0x02U, 0x00U, 0x00U, 0xFFU, 0xFFU, 0xFFU};
+    static const uint8_t addt_with_button[] =
+        {0x55U, 0x03U, 0x00U, 0x00U, 0xFFU, 0xFFU, 0xFFU,
+         0xFEU, 0xFFU, 0xFFU, 0xFFU,
+         0xFDU, 0xFFU, 0xFFU, 0xFFU};
+    static const uint8_t wave_data[] = {20U, 40U, 60U, 40U};
 
     TjcHmi_Init();
     s_TestTick = 0U;
@@ -82,6 +89,10 @@ int main(void)
         !ExpectEvent(button_three,
                      sizeof(button_three),
                      TJC_HMI_EVENT_TOGGLE_CYCLES,
+                     0U) ||
+        !ExpectEvent(button_frequency,
+                     sizeof(button_frequency),
+                     TJC_HMI_EVENT_FREQUENCY_MEASUREMENT,
                      0U) ||
         !ExpectEvent(noisy_button_three,
                      sizeof(noisy_button_three),
@@ -122,6 +133,15 @@ int main(void)
         return 1;
     }
 
-    puts("PASS TJC HMI: buttons and deferred component queries");
+    LoadInput(addt_with_button, sizeof(addt_with_button));
+    if ((tjc_send_wave("s0.id", 0, wave_data, sizeof(wave_data)) == 0U) ||
+        (TjcHmi_ReadEvent(&deferred_event, &deferred_cycles) == 0U) ||
+        (deferred_event != TJC_HMI_EVENT_FREQUENCY_MEASUREMENT))
+    {
+        puts("FAIL TJC HMI addt handshake");
+        return 1;
+    }
+
+    puts("PASS TJC HMI: buttons, deferred queries and addt handshake");
     return 0;
 }

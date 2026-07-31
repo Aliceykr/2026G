@@ -10,12 +10,13 @@ extern "C" {
 #include <stdint.h>
 
 /*
- * 淘晶驰b0/b1弹起事件固定发送7字节二进制帧：
+ * 淘晶驰b0/b1/b2弹起事件固定发送7字节二进制帧：
  * 55 <命令号> 00 00 FF FF FF。
  */
 #define TJC_RX_FRAME_LENGTH      7U
 #define TJC_BUTTON_START          0x01U
 #define TJC_BUTTON_TOGGLE_CYCLES  0x02U
+#define TJC_BUTTON_FREQUENCY      0x03U
 
 /* UART4中断接收队列和ASCII指令格式化缓冲区大小。 */
 #define RINGBUFFER_LEN           500U
@@ -25,9 +26,10 @@ extern "C" {
 typedef enum
 {
     TJC_HMI_EVENT_NONE = 0,          /**< 当前没有完整事件。 */
-    TJC_HMI_EVENT_START_MEASUREMENT, /**< b0：开始一次测量并保持结果。 */
+    TJC_HMI_EVENT_START_MEASUREMENT, /**< b0：时域测量，更新t0/t1/t2/t6/s0。 */
     TJC_HMI_EVENT_TOGGLE_CYCLES,     /**< b1：在1/3周期之间切换。 */
-    TJC_HMI_EVENT_SET_CYCLES         /**< ASCII 1/3：直接设置周期。 */
+    TJC_HMI_EVENT_SET_CYCLES,        /**< ASCII 1/3：直接设置周期。 */
+    TJC_HMI_EVENT_FREQUENCY_MEASUREMENT /**< b2：频域测量，更新t3/t4/t5/s1/t6。 */
 } TjcHmiEvent;
 
 /* 公共格式化缓冲区，为兼容原淘晶驰例程保留。 */
@@ -35,7 +37,8 @@ extern char str1[TJC_TEXT_BUFFER_LENGTH];
 
 /*
  * 初始化淘晶驰专用串口和按键帧解析状态。
- * 初始化后会延时设置b0为“开始测量”、b1为“切换周期”。
+ * 初始化后会延时设置b0为“时域测量”、b1为“切换周期”、
+ * b2为“频域测量”。
  */
 void TjcHmi_Init(void);
 
@@ -48,8 +51,9 @@ void UART4_IRQHandler(void);
 /*
  * 从本模块UART4环形接收队列解析一次屏幕事件。
  * 支持：
- *   55 01 00 00 FF FF FF -> 开始测量
+ *   55 01 00 00 FF FF FF -> 时域测量
  *   55 02 00 00 FF FF FF -> 1/3周期切换
+ *   55 03 00 00 FF FF FF -> 频域测量
  * 同时保留ASCII字符'1'和'3'直接选择周期的无屏调试兼容。
  * 有事件返回1，无事件返回0。
  */
@@ -101,10 +105,10 @@ void printf_wave(UART_HandleTypeDef *uart_handle,
                  int data);
 void clean_wave(int ch);
 void tjc_clear_wave(const char *name, int ch);
-void tjc_send_wave(const char *name,
-                   int ch,
-                   const uint8_t *data,
-                   uint16_t count);
+uint8_t tjc_send_wave(const char *name,
+                      int ch,
+                      const uint8_t *data,
+                      uint16_t count);
 
 #ifdef __cplusplus
 }

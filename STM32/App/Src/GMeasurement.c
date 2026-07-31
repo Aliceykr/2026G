@@ -12,6 +12,8 @@ static uint8_t GMeasurement_ValidateCalibration(
 static float GMeasurement_GetMvPerCode(
     const GMeasurementCalibration *calibration,
     float frequency_hz);
+static float GMeasurement_CubicInterpolate(const int16_t *samples,
+                                           float position);
 static int16_t GMeasurement_RoundToInt16(float value);
 
 uint8_t GMeasurement_Convert(const SpectrumResult *spectrum,
@@ -217,7 +219,42 @@ uint8_t GMeasurement_BuildWaveform(const int16_t *samples,
         start_sample -= period_samples;
     }
 
-    if (start_sample + span_samples > (float)(sample_count - 1U))
+    /*
+     * 后续采用四点三次插值，需要每个目标位置左右各保留采样点。
+     * 在保持基波相位不变的前提下，把显示窗口移动到帧中部，避免总是
+     * 使用采集帧开头，同时确保p0..p3均不会越界。
+     */
+    {
+        float latest_start = (float)(sample_count - 3U) - span_samples;
+        float target_start;
+
+        while (start_sample < 1.0f)
+        {
+            start_sample += period_samples;
+        }
+        if (start_sample > latest_start)
+        {
+            return 0U;
+        }
+
+        target_start = 0.5f * (1.0f + latest_start);
+        if (target_start > start_sample)
+        {
+            float shifts = floorf((target_start - start_sample) /
+                                  period_samples);
+            start_sample += shifts * period_samples;
+
+            if ((start_sample + period_samples <= latest_start) &&
+                (fabsf((start_sample + period_samples) - target_start) <
+                 fabsf(start_sample - target_start)))
+            {
+                start_sample += period_samples;
+            }
+        }
+    }
+
+    if ((start_sample < 1.0f) ||
+        (start_sample + span_samples > (float)(sample_count - 3U)))
     {
         return 0U;
     }
@@ -232,12 +269,8 @@ uint8_t GMeasurement_BuildWaveform(const int16_t *samples,
             span_samples *
             (float)index /
             (float)(G_MEASUREMENT_WAVEFORM_POINTS - 1U);
-        uint16_t left = (uint16_t)position;
-        uint16_t right = (uint16_t)(left + 1U);
-        float fraction = position - (float)left;
-        float value =
-            ((float)samples[left] - mean) * (1.0f - fraction) +
-            ((float)samples[right] - mean) * fraction;
+        float value = GMeasurement_CubicInterpolate(samples, position) -
+                      mean;
         int16_t rounded = GMeasurement_RoundToInt16(value);
 
         waveform->points[index] = rounded;
@@ -324,6 +357,30 @@ static float GMeasurement_GetMvPerCode(
     }
 
     return calibration->points[calibration->point_count - 1U].mv_per_code;
+}
+
+/*
+ * Catmull-Rom四点三次插值。
+ * 与原来的两点线性插值相比，高频正弦在每周期只有10~20个真实采样点时
+ * 仍能保持连续斜率和圆滑峰谷；不改变原始采样点，也不引入额外滤波。
+ */
+static float GMeasurement_CubicInterpolate(const int16_t *samples,
+                                           float position)
+{
+    uint16_t left = (uint16_t)position;
+    float fraction = position - (float)left;
+    float p0 = (float)samples[left - 1U];
+    float p1 = (float)samples[left];
+    float p2 = (float)samples[left + 1U];
+    float p3 = (float)samples[left + 2U];
+    float fraction2 = fraction * fraction;
+    float fraction3 = fraction2 * fraction;
+
+    return 0.5f *
+           ((2.0f * p1) +
+            (-p0 + p2) * fraction +
+            (2.0f * p0 - 5.0f * p1 + 4.0f * p2 - p3) * fraction2 +
+            (-p0 + 3.0f * p1 - 3.0f * p2 + p3) * fraction3);
 }
 
 static int16_t GMeasurement_RoundToInt16(float value)

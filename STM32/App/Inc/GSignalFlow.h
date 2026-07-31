@@ -9,15 +9,14 @@ extern "C" {
 
 #include <stdint.h>
 
-/* 初始化FPGA接口和串口屏；上电后等待用户按下开始测量。 */
+/* 初始化FPGA接口和串口屏；上电后分别等待时域或频域测量按键。 */
 void GSignalFlow_Init(void);
 
 /*
  * 裸机主循环任务：
- * 1. 读取 1.25 MSPS 分析帧并完成 FFT、频率和参数计算。
- * 2. 将频率、Vpp、Urms及H1~H3结果发送到淘晶驰屏。
- * 3. 将10kHz~500kHz FFT频谱按低频到高频发送到s1。
- * 4. 读取5 MSPS波形帧并向s0发送时域波形。
+ * 1. b0读取分析帧和5 MSPS波形帧，只更新t0/t1/t2/t6/s0。
+ * 2. b2读取分析帧，更新t3/t4/t5/s1并通过t6显示测量状态。
+ * 3. b1只使用最近一次b0缓存的波形帧切换s0的1/3周期。
  */
 void GSignalFlow_Process(void);
 

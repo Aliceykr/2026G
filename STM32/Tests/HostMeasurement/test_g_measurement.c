@@ -209,19 +209,25 @@ static int TestProductionCalibration(void)
          50000.0f,
         100000.0f,
         200000.0f,
+        250000.0f,
         300000.0f,
+        350000.0f,
         400000.0f,
+        450000.0f,
         500000.0f
     };
     static const float expected_scales[] =
     {
-        0.035275259f,
-        0.035068414f,
-        0.034883149f,
-        0.035057586f,
-        0.035663438f,
-        0.035773331f,
-        0.036831843f
+        0.031822806f,
+        0.031795286f,
+        0.031694095f,
+        0.031783351f,
+        0.032039673f,
+        0.032295994f,
+        0.032350333f,
+        0.032404671f,
+        0.032853284f,
+        0.033301896f
     };
     const GMeasurementCalibration *calibration =
         GMeasurementCalibration_Get();
@@ -234,7 +240,7 @@ static int TestProductionCalibration(void)
 
     if ((calibration == NULL) ||
         (calibration->points == NULL) ||
-        (calibration->point_count != 7U))
+        (calibration->point_count != 10U))
     {
         printf("FAIL production calibration point count\n");
         return 0;
@@ -273,7 +279,7 @@ static int TestProductionCalibration(void)
         return 0;
     }
 
-    printf("PASS production 7-point calibration and interpolation\n");
+    printf("PASS production 10-point calibration and interpolation\n");
     return 1;
 }
 
@@ -367,6 +373,82 @@ static int TestWaveformCycles(void)
 
     printf("PASS 1/3-cycle waveform alignment error=%.5f\n",
            normalized_error);
+    return 1;
+}
+
+static int TestHighFrequencyWaveformSmoothness(void)
+{
+    GMeasurementWaveform one_cycle;
+    GMeasurementWaveform three_cycles;
+    const double frequency_hz = 500000.0;
+    const double sample_rate_hz = 5000000.0;
+    const double amplitude = 12000.0;
+    const double phase_offset = 0.73;
+    double maximum_error_one = 0.0;
+    double maximum_error_three = 0.0;
+    unsigned int index;
+
+    for (index = 0U; index < TEST_FRAME_LENGTH; index++)
+    {
+        double phase = 2.0 * TEST_PI * frequency_hz * (double)index /
+                       sample_rate_hz + phase_offset;
+        double value = 500.0 + amplitude * cos(phase);
+
+        s_FrameA[index] =
+            (int16_t)((value >= 0.0) ? (value + 0.5) : (value - 0.5));
+    }
+
+    if ((GMeasurement_BuildWaveform(s_FrameA,
+                                    TEST_FRAME_LENGTH,
+                                    (float)sample_rate_hz,
+                                    (float)frequency_hz,
+                                    1U,
+                                    &one_cycle) == 0U) ||
+        (GMeasurement_BuildWaveform(s_FrameA,
+                                    TEST_FRAME_LENGTH,
+                                    (float)sample_rate_hz,
+                                    (float)frequency_hz,
+                                    3U,
+                                    &three_cycles) == 0U))
+    {
+        printf("FAIL 500kHz waveform builder returned invalid\n");
+        return 0;
+    }
+
+    for (index = 0U; index < G_MEASUREMENT_WAVEFORM_POINTS; index++)
+    {
+        double base_phase = 2.0 * TEST_PI * (double)index /
+                            (double)(G_MEASUREMENT_WAVEFORM_POINTS - 1U);
+        double expected_one = amplitude * cos(base_phase);
+        double expected_three = amplitude * cos(3.0 * base_phase);
+        double error_one =
+            fabs((double)one_cycle.points[index] - expected_one);
+        double error_three =
+            fabs((double)three_cycles.points[index] - expected_three);
+
+        if (error_one > maximum_error_one)
+        {
+            maximum_error_one = error_one;
+        }
+        if (error_three > maximum_error_three)
+        {
+            maximum_error_three = error_three;
+        }
+    }
+
+    /* 线性插值在10点/周期时误差约为峰值的5%；三次插值应低于1.5%。 */
+    if ((maximum_error_one > amplitude * 0.015) ||
+        (maximum_error_three > amplitude * 0.015))
+    {
+        printf("FAIL 500kHz waveform interpolation one=%.2f three=%.2f codes\n",
+               maximum_error_one,
+               maximum_error_three);
+        return 0;
+    }
+
+    printf("PASS 500kHz smooth waveform one=%.2f three=%.2f codes\n",
+           maximum_error_one,
+           maximum_error_three);
     return 1;
 }
 
@@ -507,6 +589,7 @@ int main(void)
     passed &= TestMissingCalibration();
     passed &= TestProductionCalibration();
     passed &= TestWaveformCycles();
+    passed &= TestHighFrequencyWaveformSmoothness();
     passed &= TestEndToEndMvLimits();
     return passed ? 0 : 1;
 }
