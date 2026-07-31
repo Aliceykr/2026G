@@ -68,6 +68,7 @@
 #define TJC_TIME_LABEL_GB2312    "\xCA\xB1\xD3\xF2\xB2\xE2\xC1\xBF"
 #define TJC_TOGGLE_LABEL_GB2312  "\xC7\xD0\xBB\xBB\xD6\xDC\xC6\xDA"
 #define TJC_FREQUENCY_LABEL_GB2312 "\xC6\xB5\xD3\xF2\xB2\xE2\xC1\xBF"
+#define TJC_RANGE_LABEL_GB2312   "\xC1\xBF\xB3\xCC\xC7\xD0\xBB\xBB"
 #define TJC_COMPUTING_TEXT       "BUSY"
 #define TJC_READY_TEXT           "READY"
 
@@ -280,7 +281,7 @@ static void TjcHmi_SendTerminator(void)
  * @brief 周期刷新按钮文字。
  *
  * 7寸屏上电通常慢于STM32，所以不能只在MCU初始化瞬间发送一次。该函数
- * 首次延迟2秒，之后每2秒重发b0/b1/b2文字；即使早期命令丢失，屏幕
+ * 首次延迟2秒，之后每2秒重发b0/b1/b2/b3文字；即使早期命令丢失，屏幕
  * 就绪后也会恢复。
  */
 static void TjcHmi_UpdateButtonText(void)
@@ -296,6 +297,7 @@ static void TjcHmi_UpdateButtonText(void)
     tjc_send_txt("page0.b0", "txt", TJC_TIME_LABEL_GB2312);
     tjc_send_txt("page0.b1", "txt", TJC_TOGGLE_LABEL_GB2312);
     tjc_send_txt("page0.b2", "txt", TJC_FREQUENCY_LABEL_GB2312);
+    tjc_send_txt("page0.b3", "txt", TJC_RANGE_LABEL_GB2312);
     s_NextStartLabelTick = now + TJC_START_LABEL_RETRY_MS;
 }
 
@@ -308,6 +310,7 @@ static void TjcHmi_UpdateButtonText(void)
  *   55 01 00 00 FF FF FF -> b0，时域测量
  *   55 02 00 00 FF FF FF -> b1，切换1/3周期
  *   55 03 00 00 FF FF FF -> b2，频域测量
+ *   55 04 00 00 FF FF FF -> b3，量程切换
  */
 static uint8_t TjcHmi_DecodeFrame(TjcHmiEvent *event)
 {
@@ -336,6 +339,12 @@ static uint8_t TjcHmi_DecodeFrame(TjcHmiEvent *event)
     if (s_RxFrame[1] == TJC_BUTTON_FREQUENCY)
     {
         *event = TJC_HMI_EVENT_FREQUENCY_MEASUREMENT;
+        return 1U;
+    }
+
+    if (s_RxFrame[1] == TJC_BUTTON_RANGE_TOGGLE)
+    {
+        *event = TJC_HMI_EVENT_TOGGLE_RANGE;
         return 1U;
     }
 
@@ -920,7 +929,7 @@ void printf_wave(UART_HandleTypeDef *uart_handle,
  * 注意data阶段不是ASCII文本，不得使用strlen，也不能逐点添加引号或逗号。
  * addt按count自动结束透明传输，原始数据后不能再追加FF FF FF，否则这些
  * 字节会被屏幕当作下一条空指令。发送前必须收到FE就绪应答，发送后必须
- * 收到FD完成应答；等待期间收到的b0/b1/b2事件会暂存并交给业务层。
+ * 收到FD完成应答；等待期间收到的b0/b1/b2/b3事件会暂存并交给业务层。
  * 921600波特率下256点约需2.8ms，底层仍保留1000ms容错超时。
  * @return FE/FD握手和原始数据发送全部成功返回1，否则返回0。
  */
@@ -955,6 +964,7 @@ uint8_t tjc_send_wave(const char *name,
     if (TjcHmi_Send(data, count) == 0U)
     {
         return 0U;
+
     }
     if (TjcHmi_WaitTransparentResponse(0xFDU) == 0U)
     {

@@ -898,6 +898,58 @@ static int TestEndToEndMvLimits(void)
     return 1;
 }
 
+static int TestHalfMvQuantization(void)
+{
+    static const double expected_amplitudes[] = {50.0, 37.5, 42.0};
+    static const unsigned int harmonics[] = {1U, 2U, 4U};
+    static const double phases[] = {0.17, 1.73, -0.52};
+    GMeasurementResult measurement;
+    double original_rms;
+    double expected_upp;
+
+    memset(&measurement, 0, sizeof(measurement));
+    measurement.valid = 1U;
+    measurement.component_count = 3U;
+    measurement.components[0].harmonic = 1U;
+    measurement.components[0].amplitude_mv = 50.24f;
+    measurement.components[0].phase_rad = (float)phases[0];
+    measurement.components[1].harmonic = 2U;
+    measurement.components[1].amplitude_mv = 37.26f;
+    measurement.components[1].phase_rad = (float)phases[1];
+    measurement.components[2].harmonic = 4U;
+    measurement.components[2].amplitude_mv = 41.76f;
+    measurement.components[2].phase_rad = (float)phases[2];
+    original_rms = sqrt((50.24 * 50.24 + 37.26 * 37.26 +
+                         41.76 * 41.76) / 2.0);
+    measurement.urms_mv = (float)original_rms;
+
+    GMeasurement_QuantizeHalfMv(&measurement);
+
+    expected_upp = ReconstructComponentUpp(expected_amplitudes,
+                                           harmonics,
+                                           phases,
+                                           3U);
+
+    if (!NearlyEqual(measurement.components[0].amplitude_mv, 50.24, 1e-5) ||
+        !NearlyEqual(measurement.components[1].amplitude_mv, 37.26, 1e-5) ||
+        !NearlyEqual(measurement.components[2].amplitude_mv, 41.76, 1e-5) ||
+        !NearlyEqual(measurement.urms_mv, original_rms, 0.001) ||
+        !NearlyEqual(measurement.upp_mv, expected_upp, 0.001))
+    {
+        printf("FAIL half-mV quantization h=%.3f/%.3f/%.3f rms=%.6f upp=%.6f expected=%.6f\n",
+               (double)measurement.components[0].amplitude_mv,
+               (double)measurement.components[1].amplitude_mv,
+               (double)measurement.components[2].amplitude_mv,
+               (double)measurement.urms_mv,
+               (double)measurement.upp_mv,
+               expected_upp);
+        return 0;
+    }
+
+    puts("PASS raw H/RMS preserved with half-mV Vpp reconstruction");
+    return 1;
+}
+
 int main(void)
 {
     int passed = 1;
@@ -911,5 +963,6 @@ int main(void)
     passed &= TestWaveformCycles();
     passed &= TestHighFrequencyWaveformSmoothness();
     passed &= TestEndToEndMvLimits();
+    passed &= TestHalfMvQuantization();
     return passed ? 0 : 1;
 }

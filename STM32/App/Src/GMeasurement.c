@@ -32,6 +32,7 @@ static float GMeasurement_RefineExtremum(
     float center_phase,
     float half_width,
     uint8_t find_maximum);
+static void GMeasurement_UpdateUpp(GMeasurementResult *measurement);
 static float GMeasurement_WrapRadians(float phase_rad);
 static float GMeasurement_CubicInterpolate(const int16_t *samples,
                                            float position);
@@ -42,12 +43,7 @@ uint8_t GMeasurement_Convert(const SpectrumResult *spectrum,
                              GMeasurementResult *measurement)
 {
     float sum_square = 0.0f;
-    float minimum = 0.0f;
-    float maximum = 0.0f;
     float fundamental_phase_error_rad;
-    uint16_t minimum_point = 0U;
-    uint16_t maximum_point = 0U;
-    uint16_t point;
     uint8_t component;
 
     if ((spectrum == NULL) ||
@@ -100,60 +96,7 @@ uint8_t GMeasurement_Convert(const SpectrumResult *spectrum,
 
     measurement->urms_mv = sqrtf(0.5f * sum_square);
 
-    for (point = 0U; point < G_MEASUREMENT_RECONSTRUCT_POINTS; point++)
-    {
-        float base_phase =
-            G_MEASUREMENT_TWO_PI *
-            (float)point /
-            (float)G_MEASUREMENT_RECONSTRUCT_POINTS;
-        float value =
-            GMeasurement_EvaluateReconstruction(measurement, base_phase);
-
-        if (point == 0U)
-        {
-            minimum = value;
-            maximum = value;
-            minimum_point = point;
-            maximum_point = point;
-        }
-        else
-        {
-            if (value < minimum)
-            {
-                minimum = value;
-                minimum_point = point;
-            }
-            if (value > maximum)
-            {
-                maximum = value;
-                maximum_point = point;
-            }
-        }
-    }
-
-    /*
-     * 2048点只负责可靠地找到全局峰谷所在的小区间；再在相邻两个粗采样
-     * 间隔内做黄金分割细化。该步骤只计算最多三个已识别分量，不接触
-     * FPGA滤波器、FFT或原始时域波形。
-     */
-    {
-        const float phase_step =
-            G_MEASUREMENT_TWO_PI /
-            (float)G_MEASUREMENT_RECONSTRUCT_POINTS;
-
-        maximum = GMeasurement_RefineExtremum(
-            measurement,
-            phase_step * (float)maximum_point,
-            phase_step,
-            1U);
-        minimum = GMeasurement_RefineExtremum(
-            measurement,
-            phase_step * (float)minimum_point,
-            phase_step,
-            0U);
-    }
-
-    measurement->upp_mv = maximum - minimum;
+    GMeasurement_UpdateUpp(measurement);
 
     if (spectrum->spur_valid != 0U)
     {
@@ -456,6 +399,35 @@ static uint8_t GMeasurement_ValidateCalibration(
     return 1U;
 }
 
+void GMeasurement_QuantizeHalfMv(GMeasurementResult *measurement)
+{
+    GMeasurementResult quantized;
+    uint8_t component;
+
+    if ((measurement == NULL) ||
+        (measurement->valid == 0U) ||
+        (measurement->component_count == 0U) ||
+        (measurement->component_count > SPECTRUM_MAX_COMPONENTS))
+    {
+        return;
+    }
+
+    quantized = *measurement;
+    for (component = 0U;
+         component < quantized.component_count;
+         component++)
+    {
+        GMeasurementComponent *item =
+            &quantized.components[component];
+
+        item->amplitude_mv =
+            roundf(item->amplitude_mv * 2.0f) * 0.5f;
+    }
+
+    GMeasurement_UpdateUpp(&quantized);
+    measurement->upp_mv = quantized.upp_mv;
+}
+
 static float GMeasurement_GetMvPerCode(
     const GMeasurementCalibration *calibration,
     float frequency_hz)
@@ -653,6 +625,70 @@ static float GMeasurement_EvaluateReconstruction(
     }
 
     return value;
+}
+
+static void GMeasurement_UpdateUpp(GMeasurementResult *measurement)
+{
+    float minimum = 0.0f;
+    float maximum = 0.0f;
+    uint16_t minimum_point = 0U;
+    uint16_t maximum_point = 0U;
+    uint16_t point;
+
+    for (point = 0U; point < G_MEASUREMENT_RECONSTRUCT_POINTS; point++)
+    {
+        float base_phase =
+            G_MEASUREMENT_TWO_PI *
+            (float)point /
+            (float)G_MEASUREMENT_RECONSTRUCT_POINTS;
+        float value =
+            GMeasurement_EvaluateReconstruction(measurement, base_phase);
+
+        if (point == 0U)
+        {
+            minimum = value;
+            maximum = value;
+            minimum_point = point;
+            maximum_point = point;
+        }
+        else
+        {
+            if (value < minimum)
+            {
+                minimum = value;
+                minimum_point = point;
+            }
+            if (value > maximum)
+            {
+                maximum = value;
+                maximum_point = point;
+            }
+        }
+    }
+
+    /*
+     * 2048点只负责可靠地找到全局峰谷所在的小区间；再在相邻两个粗采样
+     * 间隔内做黄金分割细化。这里只重建最多三个已识别分量，不改变
+     * FPGA滤波器、FFT、频率或相位。
+     */
+    {
+        const float phase_step =
+            G_MEASUREMENT_TWO_PI /
+            (float)G_MEASUREMENT_RECONSTRUCT_POINTS;
+
+        maximum = GMeasurement_RefineExtremum(
+            measurement,
+            phase_step * (float)maximum_point,
+            phase_step,
+            1U);
+        minimum = GMeasurement_RefineExtremum(
+            measurement,
+            phase_step * (float)minimum_point,
+            phase_step,
+            0U);
+    }
+
+    measurement->upp_mv = maximum - minimum;
 }
 
 static float GMeasurement_RefineExtremum(

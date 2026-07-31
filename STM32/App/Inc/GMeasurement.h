@@ -115,6 +115,13 @@ uint8_t GMeasurement_Convert(const SpectrumResult *spectrum,
                              GMeasurementResult *measurement);
 
 /*
+ * 内部复制已换算的各分量峰值，并按
+ * round(amplitude_mv * 2) / 2量化为0.5mV后只重新计算Vpp。
+ * 原生分量幅值和Vrms保持不变，供串口屏与遥测继续显示原始小数值。
+ */
+void GMeasurement_QuantizeHalfMv(GMeasurementResult *measurement);
+
+/*
  * 从 5 MSPS 波形帧中按基波相位对齐，生成固定 256 点的 1 周期或 3 周期
  * 屏幕无关波形数据。cycles 只接受 1 或 3。
  */

@@ -61,6 +61,8 @@ int main(void)
         {0x55U, 0x02U, 0x00U, 0x00U, 0xFFU, 0xFFU, 0xFFU};
     static const uint8_t button_frequency[] =
         {0x55U, 0x03U, 0x00U, 0x00U, 0xFFU, 0xFFU, 0xFFU};
+    static const uint8_t button_range[] =
+        {0x55U, 0x04U, 0x00U, 0x00U, 0xFFU, 0xFFU, 0xFFU};
     static const uint8_t noisy_button_three[] =
         {0x00U, 0xAAU, 0x55U, 0x02U, 0x00U, 0x00U, 0xFFU, 0xFFU, 0xFFU};
     static const uint8_t false_header_then_button[] =
@@ -93,6 +95,10 @@ int main(void)
         !ExpectEvent(button_frequency,
                      sizeof(button_frequency),
                      TJC_HMI_EVENT_FREQUENCY_MEASUREMENT,
+                     0U) ||
+        !ExpectEvent(button_range,
+                     sizeof(button_range),
+                     TJC_HMI_EVENT_TOGGLE_RANGE,
                      0U) ||
         !ExpectEvent(noisy_button_three,
                      sizeof(noisy_button_three),

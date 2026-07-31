@@ -73,11 +73,13 @@ static uint8_t s_WaveFrameValid;
 static uint8_t s_MeasurementEnabled;
 static uint8_t s_HmiReadyPending;
 static uint8_t s_SerialStreamEnabled;
+static uint8_t s_HalfMvQuantizationEnabled;
 static float s_TimeFundamentalHz;
 static uint32_t s_HmiBusyUntilTick;
 static uint32_t s_LastStartEventTick;
 static uint32_t s_LastCycleEventTick;
 static uint32_t s_LastFrequencyEventTick;
+static uint32_t s_LastRangeEventTick;
 static uint16_t s_WaveDisplayPoints;
 static uint8_t s_WaveDisplay[G_FLOW_WAVE_MAX_POINTS];
 static uint16_t s_SpectrumDisplayPoints;
@@ -153,11 +155,13 @@ void GSignalFlow_Init(void)
     s_MeasurementEnabled = 0U;
     s_HmiReadyPending = 0U;
     s_SerialStreamEnabled = 0U;
+    s_HalfMvQuantizationEnabled = 1U;
     s_TimeFundamentalHz = 0.0f;
     s_HmiBusyUntilTick = 0UL;
     s_LastStartEventTick = HAL_GetTick() - G_FLOW_BUTTON_DEBOUNCE_MS;
     s_LastCycleEventTick = HAL_GetTick() - G_FLOW_BUTTON_DEBOUNCE_MS;
     s_LastFrequencyEventTick = HAL_GetTick() - G_FLOW_BUTTON_DEBOUNCE_MS;
+    s_LastRangeEventTick = HAL_GetTick() - G_FLOW_BUTTON_DEBOUNCE_MS;
     s_WaveDisplayPoints = 0U;
     s_SpectrumDisplayPoints = 0U;
 
@@ -596,6 +600,28 @@ static void GSignalFlow_HandleCommand(void)
         return;
     }
 
+    if (event == TJC_HMI_EVENT_TOGGLE_RANGE)
+    {
+        char buffer[64];
+
+        if ((uint32_t)(now - s_LastRangeEventTick) <
+            G_FLOW_BUTTON_DEBOUNCE_MS)
+        {
+            return;
+        }
+        s_LastRangeEventTick = now;
+        s_HalfMvQuantizationEnabled =
+            (s_HalfMvQuantizationEnabled == 0U) ? 1U : 0U;
+
+        (void)snprintf(
+            buffer,
+            sizeof(buffer),
+            "G_HMI,event=range,half_mv=%s\r\n",
+            (s_HalfMvQuantizationEnabled != 0U) ? "on" : "off");
+        GSignalFlow_SendText(buffer);
+        return;
+    }
+
     if (event == TJC_HMI_EVENT_TOGGLE_CYCLES)
     {
         requested_cycles =
@@ -884,6 +910,11 @@ static uint8_t GSignalFlow_SendMeasurement(void)
                        (unsigned long)s_ActiveSequence);
         GSignalFlow_SendText(buffer);
         return 0U;
+    }
+
+    if (s_HalfMvQuantizationEnabled != 0U)
+    {
+        GMeasurement_QuantizeHalfMv(&s_Measurement);
     }
 
     written = snprintf(
