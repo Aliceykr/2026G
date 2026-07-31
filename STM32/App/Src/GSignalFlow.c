@@ -155,7 +155,7 @@ void GSignalFlow_Init(void)
     s_MeasurementEnabled = 0U;
     s_HmiReadyPending = 0U;
     s_SerialStreamEnabled = 0U;
-    s_HalfMvQuantizationEnabled = 1U;
+    s_HalfMvQuantizationEnabled = 0U;
     s_TimeFundamentalHz = 0.0f;
     s_HmiBusyUntilTick = 0UL;
     s_LastStartEventTick = HAL_GetTick() - G_FLOW_BUTTON_DEBOUNCE_MS;
