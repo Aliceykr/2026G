@@ -3,7 +3,7 @@
 <title>Static Call Graph - [stm32_FilterShell_2026GA\stm32_FilterShell_2026GA.axf]</title></head>
 <body><HR>
 <H1>Static Call Graph for image stm32_FilterShell_2026GA\stm32_FilterShell_2026GA.axf</H1><HR>
-<BR><P>#&#060CALLGRAPH&#062# ARM Linker, 6230001: Last Updated: Fri Jul 31 19:01:39 2026
+<BR><P>#&#060CALLGRAPH&#062# ARM Linker, 6230001: Last Updated: Fri Jul 31 20:32:29 2026
 <BR><P>
 <H3>Maximum Stack Usage =       1488 bytes + Unknown(Functions without stacksize, Cycles, Untraceable Function Pointers)</H3><H3>
 Call chain for Maximum Stack Depth:</H3>
@@ -1365,7 +1365,7 @@ Global Symbols
 <P><STRONG><a name="[6]"></a>SVC_Handler</STRONG> (Thumb, 2 bytes, Stack size 0 bytes, stm32f4xx_it.o(.text.SVC_Handler))
 <BR>[Address Reference Count : 1]<UL><LI> startup_stm32f407xx.o(RESET)
 </UL>
-<P><STRONG><a name="[c4]"></a>SpectrumAnalyzer_Run</STRONG> (Thumb, 11300 bytes, Stack size 920 bytes, spectrumanalyzer.o(.text.SpectrumAnalyzer_Run))
+<P><STRONG><a name="[c4]"></a>SpectrumAnalyzer_Run</STRONG> (Thumb, 11332 bytes, Stack size 920 bytes, spectrumanalyzer.o(.text.SpectrumAnalyzer_Run))
 <BR><BR>[Stack]<UL><LI>Max Depth = 1368 + Unknown Stack Size
 <LI>Call Chain = SpectrumAnalyzer_Run &rArr; arm_rfft_fast_f32 &rArr; arm_cfft_f32 &rArr; arm_cfft_radix8by4_f32 &rArr; arm_radix8_butterfly_f32
 </UL>
@@ -1861,8 +1861,8 @@ Local Symbols
 <BR>[Called By]<UL><LI><a href="#[bc]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSignalFlow_Process
 </UL>
 
-<P><STRONG><a name="[c7]"></a>GSignalFlow_SendCalibrationTelemetry</STRONG> (Thumb, 2656 bytes, Stack size 600 bytes, gsignalflow.o(.text.GSignalFlow_SendCalibrationTelemetry))
-<BR><BR>[Stack]<UL><LI>Max Depth = 736 + Unknown Stack Size
+<P><STRONG><a name="[c7]"></a>GSignalFlow_SendCalibrationTelemetry</STRONG> (Thumb, 2948 bytes, Stack size 608 bytes, gsignalflow.o(.text.GSignalFlow_SendCalibrationTelemetry))
+<BR><BR>[Stack]<UL><LI>Max Depth = 744 + Unknown Stack Size
 <LI>Call Chain = GSignalFlow_SendCalibrationTelemetry &rArr; __2snprintf &rArr; _printf_char_common &rArr; __printf
 </UL>
 <BR>[Calls]<UL><LI><a href="#[af]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;GSerial_Transmit

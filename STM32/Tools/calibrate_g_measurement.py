@@ -40,6 +40,10 @@ class RigolScpiInstrument:
         if self.sock is None:
             raise ConnectionError("RIGOL SCPI connection is not open")
         self.sock.sendall((command.rstrip() + "\n").encode("ascii"))
+        # DG1022Z firmware 00.01.12 drops rapid back-to-back state changes:
+        # queries show the new values while the physical waveform can remain
+        # unchanged.  A 50 ms command spacing was verified on the instrument.
+        time.sleep(0.05)
 
     def query(self, command: str) -> str:
         if not command.rstrip().endswith("?"):
@@ -129,18 +133,65 @@ class Generator:
     def __exit__(self, exc_type, exc_value, traceback) -> None:
         self.instrument.close()
 
+    def _verify_rigol_sine(self, frequency_hz: float, vpp_mv: float) -> None:
+        response = self.instrument.query(":SOUR1:APPL?").strip('"')
+        fields = response.split(",")
+        if len(fields) < 3 or fields[0].upper() != "SIN":
+            raise RuntimeError(f"unexpected RIGOL waveform readback: {response}")
+        actual_frequency_hz = float(fields[1])
+        actual_vpp_mv = float(fields[2]) * 1000.0
+        if abs(actual_frequency_hz - frequency_hz) > max(0.5, frequency_hz * 1e-6):
+            raise RuntimeError(
+                f"RIGOL frequency readback mismatch: {actual_frequency_hz} Hz"
+            )
+        if abs(actual_vpp_mv - vpp_mv) > max(0.001, vpp_mv * 1e-5):
+            raise RuntimeError(
+                f"RIGOL amplitude readback mismatch: {actual_vpp_mv} mVpp"
+            )
+
+    def _reconnect_rigol(self) -> None:
+        # DG1022Z firmware 00.01.12 physically applies the first parameter
+        # batch on a raw-SCPI connection, but later batches may only update
+        # query readback.  Reconnect for every calibration point.
+        self.instrument.close()
+        self.instrument.open()
+
+    def _apply_rigol_commands_isolated(self, commands: list[str]) -> None:
+        # The raw-SCPI service can acknowledge a batch while physically
+        # applying only some setters.  Make every setter the first command of
+        # a fresh TCP session; this is slower but deterministic for calibration.
+        for command in commands:
+            self.instrument.close()
+            self.instrument.open()
+            self.instrument.write(command)
+        self.instrument.close()
+        self.instrument.open()
+
     def sine(self, frequency_hz: float, vpp_mv: float, phase_deg: float = 0.0) -> None:
         if self.instrument is None:
             raise ConnectionError("generator is not connected")
         if self.is_rigol:
-            self.instrument.write(":OUTP1 OFF")
-            self.instrument.write(":OUTP1:LOAD 50")
-            self.instrument.write(
-                ":SOUR1:APPL:SIN {:.9g},{:.9g},0,{:.9g}".format(
-                    frequency_hz, vpp_mv / 1000.0, phase_deg
-                )
-            )
-            self.instrument.write(":OUTP1 ON")
+            # DG1022Z firmware 00.01.12 can update APPL? readback without
+            # applying APPL:SIN to the waveform engine.  Independent setters
+            # have been verified at the physical output and must be used here.
+            self._apply_rigol_commands_isolated([
+                ":OUTP1 OFF",
+                ":SOUR1:FUNC SIN",
+                # FREQ:FIX changes readback but can leave output unchanged.
+                f":SOUR1:FREQ {frequency_hz:.9g}",
+                ":SOUR1:VOLT:UNIT VPP",
+                f":SOUR1:VOLT {vpp_mv / 1000.0:.9g}",
+                ":SOUR1:VOLT:OFFS 0",
+                f":SOUR1:PHAS {phase_deg:.9g}",
+                ":OUTP1:LOAD 50",
+                ":OUTP1 ON",
+            ])
+            if self.instrument.query("*OPC?") != "1":
+                raise RuntimeError("RIGOL did not complete the sine update")
+            error = self.instrument.query(":SYST:ERR?")
+            if not error.startswith("0,"):
+                raise RuntimeError(f"RIGOL SCPI error: {error}")
+            self._verify_rigol_sine(frequency_hz, vpp_mv)
             return
 
         self.instrument.write("C1:OUTP OFF")
@@ -168,44 +219,54 @@ class Generator:
             highest_order = max([order for order, _vpp, _phase in items], default=2)
             selected_orders = {order for order, _vpp, _phase in items}
             user_phase_supported = highest_order <= 8
-            self.instrument.write(":OUTP1 OFF")
-            self.instrument.write(":OUTP1:LOAD 50")
-            self.instrument.write(
+            commands = [
+                ":OUTP1 OFF",
+                ":OUTP1:LOAD 50",
                 ":SOUR1:APPL:HARM {:.9g},{:.9g},0,{:.9g}".format(
                     fundamental_hz,
                     fundamental_vpp_mv / 1000.0,
                     fundamental_phase_deg,
-                )
-            )
-            self.instrument.write(f":SOUR1:HARM:ORDER {highest_order}")
+                ),
+                f":SOUR1:HARM:ORDER {highest_order}",
+            ]
             if user_phase_supported:
-                self.instrument.write(":SOUR1:HARM:TYPE USER")
                 user_mask = "X" + "".join(
                     "1" if order in selected_orders else "0"
                     for order in range(2, 9)
                 )
-                self.instrument.write(f":SOUR1:HARM:USER {user_mask}")
+                commands.extend([
+                    ":SOUR1:HARM:TYPE USER",
+                    f":SOUR1:HARM:USER {user_mask}",
+                ])
             else:
                 # DG1022Z的USER选择位只覆盖H2~H8。H9/H10使用ALL，
                 # 其余阶次幅值清零，并统一使用仪器实际生效的0度相位。
-                self.instrument.write(":SOUR1:HARM:TYPE ALL")
+                commands.append(":SOUR1:HARM:TYPE ALL")
             for order in range(2, highest_order + 1):
-                self.instrument.write(f":SOUR1:HARM:AMPL {order},0")
-                self.instrument.write(f":SOUR1:HARM:PHAS {order},0")
+                commands.append(f":SOUR1:HARM:AMPL {order},0")
+                commands.append(f":SOUR1:HARM:PHAS {order},0")
             for order, vpp_mv, phase_deg in items:
-                self.instrument.write(
+                commands.append(
                     f":SOUR1:HARM:AMPL {order},{vpp_mv / 1000.0:.9g}"
                 )
-                self.instrument.write(
+                commands.append(
                     ":SOUR1:HARM:PHAS {},{:.9g}".format(
                         order,
                         phase_deg if user_phase_supported else 0.0,
                     )
                 )
+            commands.append(":OUTP1 ON")
+
+            # DG1022Z firmware 00.01.12 has the same stale-waveform behavior
+            # in harmonic mode as in sine mode: setters after the first one on
+            # a raw-SCPI connection may update query readback without reaching
+            # the waveform engine.  Isolate every setter in a fresh session.
+            self._apply_rigol_commands_isolated(commands)
             error = self.instrument.query(":SYST:ERR?")
             if not error.startswith("0,"):
                 raise RuntimeError(f"RIGOL SCPI error: {error}")
-            self.instrument.write(":OUTP1 ON")
+            if self.instrument.query("*OPC?") != "1":
+                raise RuntimeError("RIGOL did not complete the harmonic update")
             return {
                 order: (phase_deg if user_phase_supported else 0.0)
                 for order, _vpp, phase_deg in items

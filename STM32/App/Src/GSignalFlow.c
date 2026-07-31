@@ -1025,7 +1025,20 @@ static void GSignalFlow_SendCalibrationTelemetry(void)
     float reference_phase_deg = 0.0f;
     uint8_t reference_valid = 0U;
     uint8_t component;
+    uint16_t sample_index;
+    int16_t raw_min = s_CaptureFrame[0];
+    int16_t raw_max = s_CaptureFrame[0];
     int written;
+
+    for (sample_index = 1U;
+         sample_index < SPECTRUM_FRAME_LENGTH;
+         sample_index++)
+    {
+        if (s_CaptureFrame[sample_index] < raw_min)
+            raw_min = s_CaptureFrame[sample_index];
+        if (s_CaptureFrame[sample_index] > raw_max)
+            raw_max = s_CaptureFrame[sample_index];
+    }
 
     GSignalFlow_FormatFixed2(s_Measurement.fundamental_hz,
                              f0_text,
@@ -1038,13 +1051,16 @@ static void GSignalFlow_SendCalibrationTelemetry(void)
                              sizeof(urms_text));
     (void)snprintf(buffer,
                    sizeof(buffer),
-                   "G_CAL,seq=%lu,f0=%sHz,n=%u,upp=%smV,urms=%smV,t_ms=%lu\r\n",
+                   "G_CAL,seq=%lu,f0=%sHz,n=%u,upp=%smV,urms=%smV,t_ms=%lu,raw_min=%d,raw_max=%d,raw_pp=%ld\r\n",
                    (unsigned long)s_ActiveSequence,
                    f0_text,
                    (unsigned int)s_Measurement.component_count,
                    upp_text,
                    urms_text,
-                   (unsigned long)s_AnalysisElapsedMs);
+                   (unsigned long)s_AnalysisElapsedMs,
+                   (int)raw_min,
+                   (int)raw_max,
+                   (long)((int32_t)raw_max - (int32_t)raw_min));
     GSignalFlow_SendText(buffer);
 
     for (component = 0U;

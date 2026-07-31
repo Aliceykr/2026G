@@ -292,6 +292,7 @@ static int TestProductionCalibration(void)
     SpectrumResult spectrum;
     GMeasurementResult measurement;
     uint8_t index;
+    unsigned int verified_nodes = 0U;
 
     if ((calibration == NULL) ||
         (calibration->points == NULL) ||
@@ -337,8 +338,10 @@ static int TestProductionCalibration(void)
 
         for (level = 0U; level < row->level_count; level++)
         {
+            const double expected_peak_mv = 25.0 * (double)(level + 1U);
+
             if (!NearlyEqual(row->levels[level].peak_mv,
-                             25.0 * (double)(level + 1U),
+                             expected_peak_mv,
                              0.001))
             {
                 printf("FAIL production 2D level %u/%u\n",
@@ -346,6 +349,34 @@ static int TestProductionCalibration(void)
                        (unsigned int)level);
                 return 0;
             }
+
+            memset(&spectrum, 0, sizeof(spectrum));
+            spectrum.valid = 1U;
+            spectrum.fundamental_hz = row->frequency_hz;
+            spectrum.component_count = 1U;
+            spectrum.components[0].harmonic = 1U;
+            spectrum.components[0].frequency_hz = row->frequency_hz;
+            spectrum.components[0].amplitude_codes =
+                row->levels[level].amplitude_codes;
+
+            if ((GMeasurement_Convert(&spectrum,
+                                      calibration,
+                                      &measurement) == 0U) ||
+                !NearlyEqual(measurement.components[0].amplitude_mv,
+                             expected_peak_mv,
+                             0.001) ||
+                !NearlyEqual(measurement.upp_mv,
+                             2.0 * expected_peak_mv,
+                             0.002))
+            {
+                printf("FAIL production node %u/%u amp=%.6f upp=%.6f\n",
+                       (unsigned int)index,
+                       (unsigned int)level,
+                       (double)measurement.components[0].amplitude_mv,
+                       (double)measurement.upp_mv);
+                return 0;
+            }
+            verified_nodes++;
         }
     }
 
@@ -381,7 +412,8 @@ static int TestProductionCalibration(void)
         return 0;
     }
 
-    printf("PASS production 50x5 amplitude and 50-point phase tables\n");
+    printf("PASS production 50x5 amplitude (%u nodes) and 50-point phase tables\n",
+           verified_nodes);
     return 1;
 }
 
