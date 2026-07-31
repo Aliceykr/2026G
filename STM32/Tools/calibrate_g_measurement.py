@@ -175,6 +175,11 @@ class OmniProbe:
                 pending.setdefault(seq, {})[harmonic] = {
                     key: float(values[key]) for key in required
                 }
+                for optional_key in ("amp", "k", "rel"):
+                    if optional_key in values:
+                        pending[seq][harmonic][optional_key] = float(
+                            values[optional_key]
+                        )
                 if all(item in pending[seq] for item in harmonics):
                     completed.append(pending.pop(seq))
                     if len(completed) >= frame_count:

@@ -217,6 +217,84 @@ static int TestNoSignal(void)
     return 1;
 }
 
+#if SPECTRUM_ENABLE_02MV_EXPERIMENT != 0U
+static int TestOneMegahertzAliasRejection(void)
+{
+    static const double interference_phases[] = {0.15, 1.70, -2.20};
+    SpectrumTestCase test_case =
+    {
+        "1MHz-alias-reject",
+        100000.0,
+        3U,
+        {1U, 3U, 5U},
+        {6300.0, 2350.0, 2250.0},
+        {0.20, -1.10, 2.40},
+        180.0,
+        0.002,
+        250000.0,
+        5000.0
+    };
+    size_t phase_index;
+    int passed = 1;
+
+    for (phase_index = 0U;
+         phase_index < sizeof(interference_phases) /
+                           sizeof(interference_phases[0]);
+         phase_index++)
+    {
+        SpectrumResult result;
+        uint16_t sample_index;
+        uint8_t component;
+
+        GenerateSamples(&test_case);
+        for (sample_index = 0U;
+             sample_index < SPECTRUM_FRAME_LENGTH;
+             sample_index++)
+        {
+            double time =
+                (double)sample_index / (double)SPECTRUM_SAMPLE_RATE_HZ;
+            double value = (double)s_Samples[sample_index] +
+                           test_case.spur_amplitude *
+                           cos(2.0 * TEST_PI * 250000.0 * time +
+                               interference_phases[phase_index]);
+
+            if (value > 32767.0)
+                value = 32767.0;
+            else if (value < -32768.0)
+                value = -32768.0;
+            s_Samples[sample_index] =
+                (int16_t)((value >= 0.0) ? (value + 0.5) :
+                                             (value - 0.5));
+        }
+
+        if (SpectrumAnalyzer_Run(s_Samples, &result) == 0U)
+        {
+            passed = 0;
+            continue;
+        }
+
+        for (component = 0U; component < test_case.component_count; component++)
+        {
+            double relative_error =
+                fabs((double)result.components[component].amplitude_codes -
+                     test_case.amplitudes[component]) /
+                test_case.amplitudes[component];
+
+            if ((result.components[component].harmonic !=
+                 test_case.harmonics[component]) ||
+                (relative_error > 0.002))
+            {
+                passed = 0;
+            }
+        }
+    }
+
+    printf("%s 1MHz alias nuisance rejection\n",
+           passed ? "PASS" : "FAIL");
+    return passed;
+}
+#endif
+
 int main(void)
 {
     static const SpectrumTestCase cases[] =
@@ -233,6 +311,7 @@ int main(void)
             0.0,
             0.0
         },
+#if SPECTRUM_ENABLE_02MV_EXPERIMENT != 0U
         {
             "non-bin-103333",
             103333.3,
@@ -245,6 +324,7 @@ int main(void)
             0.0,
             0.0
         },
+#endif
         {
             "two-tone-250k",
             250000.0,
@@ -298,6 +378,9 @@ int main(void)
     int passed = 1;
 
     passed &= TestNoSignal();
+#if SPECTRUM_ENABLE_02MV_EXPERIMENT != 0U
+    passed &= TestOneMegahertzAliasRejection();
+#endif
 
     for (index = 0U; index < sizeof(cases) / sizeof(cases[0]); index++)
     {

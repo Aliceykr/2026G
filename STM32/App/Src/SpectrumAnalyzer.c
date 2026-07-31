@@ -16,7 +16,10 @@
 #define SPECTRUM_MATCH_TOLERANCE_BIN 2.5f
 #define SPECTRUM_NOISE_POWER_FACTOR 4.0f
 #define SPECTRUM_RECONSTRUCT_POINTS 2048U
-#define SPECTRUM_MAX_LS_COLUMNS     7U
+#define SPECTRUM_INTERFERENCE_ALIAS_HZ 250000.0f
+#define SPECTRUM_INTERFERENCE_MATCH_HZ    250.0f
+#define SPECTRUM_MAX_FIT_TONES             4U
+#define SPECTRUM_MAX_LS_COLUMNS            9U
 
 typedef struct
 {
@@ -53,8 +56,10 @@ static uint8_t SpectrumAnalyzer_SelectHarmonics(const SpectrumPeak *peaks,
                                                 float *fundamental_hz);
 static uint8_t SpectrumAnalyzer_FitComponents(const int16_t *samples,
                                               const uint8_t *harmonics,
+                                              const float *fit_frequencies_hz,
                                               uint8_t component_count,
                                               float fundamental_hz,
+                                              uint8_t reject_1mhz_alias,
                                               SpectrumResult *result);
 static void SpectrumAnalyzer_FindStrongestUnmatched(
     const SpectrumPeak *peaks,
@@ -74,6 +79,7 @@ uint8_t SpectrumAnalyzer_Run(const int16_t *samples, SpectrumResult *result)
 {
     SpectrumPeak peaks[SPECTRUM_PEAK_CAPACITY];
     uint8_t harmonics[SPECTRUM_MAX_COMPONENTS];
+    float fit_frequencies_hz[SPECTRUM_MAX_COMPONENTS];
     uint8_t peak_count = 0U;
     uint8_t component_count;
     uint16_t first_bin;
@@ -83,6 +89,7 @@ uint8_t SpectrumAnalyzer_Run(const int16_t *samples, SpectrumResult *result)
     float noise_power = 0.0f;
     float fundamental_hz = 0.0f;
     float strongest_amplitude = 0.0f;
+    uint8_t reject_1mhz_alias = 0U;
 
     if ((samples == NULL) || (result == NULL))
     {
@@ -163,6 +170,20 @@ uint8_t SpectrumAnalyzer_Run(const int16_t *samples, SpectrumResult *result)
             (float)SPECTRUM_FRAME_LENGTH;
     }
 
+#if SPECTRUM_ENABLE_02MV_EXPERIMENT != 0U
+    if (SpectrumAnalyzer_FindNearestPeak(
+            peaks,
+            peak_count,
+            SPECTRUM_INTERFERENCE_ALIAS_HZ,
+            SPECTRUM_MATCH_TOLERANCE_BIN *
+                SPECTRUM_SAMPLE_RATE_HZ /
+                (float)SPECTRUM_FRAME_LENGTH,
+            peaks[0].power * 1.0e-4f) >= 0)
+    {
+        reject_1mhz_alias = 1U;
+    }
+#endif
+
     component_count = SpectrumAnalyzer_SelectHarmonics(peaks,
                                                        peak_count,
                                                        noise_power,
@@ -175,6 +196,11 @@ uint8_t SpectrumAnalyzer_Run(const int16_t *samples, SpectrumResult *result)
     }
 
     fundamental_hz = roundf(fundamental_hz / 500.0f) * 500.0f;
+    for (bin = 0U; bin < component_count; bin++)
+    {
+        fit_frequencies_hz[bin] =
+            fundamental_hz * (float)harmonics[bin];
+    }
     {
         float tol = SPECTRUM_MATCH_TOLERANCE_BIN *
                     SPECTRUM_SAMPLE_RATE_HZ /
@@ -192,13 +218,28 @@ uint8_t SpectrumAnalyzer_Run(const int16_t *samples, SpectrumResult *result)
              h++)
         {
             float target = fundamental_hz * (float)h;
+            int32_t match;
 
             if (target > SPECTRUM_MAX_FREQUENCY_HZ + tol)
                 break;
 
-            if (SpectrumAnalyzer_FindNearestPeak(
-                    peaks, peak_count, target, tol, thresh) >= 0)
-                harmonics[new_count++] = h;
+            match = SpectrumAnalyzer_FindNearestPeak(
+                peaks, peak_count, target, tol, thresh);
+            if (match >= 0)
+            {
+                float detected_hz = peaks[match].frequency_hz;
+
+                harmonics[new_count] = h;
+                fit_frequencies_hz[new_count] =
+#if SPECTRUM_ENABLE_02MV_EXPERIMENT != 0U
+                    (fabsf(detected_hz - target) <= 50.0f) ?
+                        target : detected_hz;
+#else
+                    target;
+                (void)detected_hz;
+#endif
+                new_count++;
+            }
         }
 
         if (new_count > 0U)
@@ -210,8 +251,10 @@ uint8_t SpectrumAnalyzer_Run(const int16_t *samples, SpectrumResult *result)
 
     if (SpectrumAnalyzer_FitComponents(samples,
                                        harmonics,
+                                       fit_frequencies_hz,
                                        component_count,
                                        fundamental_hz,
+                                       reject_1mhz_alias,
                                        result) == 0U)
     {
         memset(result, 0, sizeof(*result));
@@ -625,22 +668,27 @@ static uint8_t SpectrumAnalyzer_SelectHarmonics(const SpectrumPeak *peaks,
 
 static uint8_t SpectrumAnalyzer_FitComponents(const int16_t *samples,
                                               const uint8_t *harmonics,
+                                              const float *component_fit_hz,
                                               uint8_t component_count,
                                               float fundamental_hz,
+                                              uint8_t reject_1mhz_alias,
                                               SpectrumResult *result)
 {
     float normal[SPECTRUM_MAX_LS_COLUMNS][SPECTRUM_MAX_LS_COLUMNS];
     float rhs[SPECTRUM_MAX_LS_COLUMNS];
     float solution[SPECTRUM_MAX_LS_COLUMNS];
-    float cos_state[SPECTRUM_MAX_COMPONENTS];
-    float sin_state[SPECTRUM_MAX_COMPONENTS];
-    float cos_step[SPECTRUM_MAX_COMPONENTS];
-    float sin_step[SPECTRUM_MAX_COMPONENTS];
+    float fit_frequency_hz[SPECTRUM_MAX_FIT_TONES];
+    float cos_state[SPECTRUM_MAX_FIT_TONES];
+    float sin_state[SPECTRUM_MAX_FIT_TONES];
+    float cos_step[SPECTRUM_MAX_FIT_TONES];
+    float sin_step[SPECTRUM_MAX_FIT_TONES];
     float basis[SPECTRUM_MAX_LS_COLUMNS];
-    uint8_t column_count = (uint8_t)(1U + 2U * component_count);
+    uint8_t fit_tone_count = component_count;
+    uint8_t column_count;
     uint8_t row;
     uint8_t column;
     uint8_t component;
+    uint8_t fit_tone;
     uint16_t sample_index;
 
     memset(normal, 0, sizeof(normal));
@@ -649,12 +697,50 @@ static uint8_t SpectrumAnalyzer_FitComponents(const int16_t *samples,
 
     for (component = 0U; component < component_count; component++)
     {
-        float frequency = fundamental_hz * (float)harmonics[component];
-        float omega = SPECTRUM_TWO_PI * frequency / SPECTRUM_SAMPLE_RATE_HZ;
-        cos_state[component] = 1.0f;
-        sin_state[component] = 0.0f;
-        cos_step[component] = cosf(omega);
-        sin_step[component] = sinf(omega);
+        fit_frequency_hz[component] = component_fit_hz[component];
+    }
+
+    /*
+     * 1 MHz干扰经过1.25 MSPS抽取后残留会混叠到250 kHz。把该频率作为
+     * 一个不输出的干扰基函数与最多三个有效谐波联合拟合，可消除有限帧
+     * 内非正交泄漏造成的幅值和相位偏差；这一步不修改FPGA滤波器。
+     * 若250 kHz本身就是有效谐波，则不能在采样后区分二者，避免重复列。
+     */
+    if ((reject_1mhz_alias != 0U) &&
+        (fit_tone_count < SPECTRUM_MAX_FIT_TONES))
+    {
+        uint8_t alias_is_component = 0U;
+
+        for (component = 0U; component < component_count; component++)
+        {
+            if (fabsf(fit_frequency_hz[component] -
+                      SPECTRUM_INTERFERENCE_ALIAS_HZ) <=
+                SPECTRUM_INTERFERENCE_MATCH_HZ)
+            {
+                alias_is_component = 1U;
+                break;
+            }
+        }
+
+        if (alias_is_component == 0U)
+        {
+            fit_frequency_hz[fit_tone_count] =
+                SPECTRUM_INTERFERENCE_ALIAS_HZ;
+            fit_tone_count++;
+        }
+    }
+
+    column_count = (uint8_t)(1U + 2U * fit_tone_count);
+
+    for (fit_tone = 0U; fit_tone < fit_tone_count; fit_tone++)
+    {
+        float omega = SPECTRUM_TWO_PI *
+                      fit_frequency_hz[fit_tone] /
+                      SPECTRUM_SAMPLE_RATE_HZ;
+        cos_state[fit_tone] = 1.0f;
+        sin_state[fit_tone] = 0.0f;
+        cos_step[fit_tone] = cosf(omega);
+        sin_step[fit_tone] = sinf(omega);
     }
 
     for (sample_index = 0U; sample_index < SPECTRUM_FRAME_LENGTH; sample_index++)
@@ -662,29 +748,31 @@ static uint8_t SpectrumAnalyzer_FitComponents(const int16_t *samples,
         float sample_value = (float)samples[sample_index];
 
         basis[0] = 1.0f;
-        for (component = 0U; component < component_count; component++)
+        for (fit_tone = 0U; fit_tone < fit_tone_count; fit_tone++)
         {
             float next_cos;
             float next_sin;
 
-            basis[1U + 2U * component] = cos_state[component];
-            basis[2U + 2U * component] = sin_state[component];
+            basis[1U + 2U * fit_tone] = cos_state[fit_tone];
+            basis[2U + 2U * fit_tone] = sin_state[fit_tone];
 
-            next_cos = cos_state[component] * cos_step[component] -
-                       sin_state[component] * sin_step[component];
-            next_sin = sin_state[component] * cos_step[component] +
-                       cos_state[component] * sin_step[component];
-            cos_state[component] = next_cos;
-            sin_state[component] = next_sin;
+            next_cos = cos_state[fit_tone] * cos_step[fit_tone] -
+                       sin_state[fit_tone] * sin_step[fit_tone];
+            next_sin = sin_state[fit_tone] * cos_step[fit_tone] +
+                       cos_state[fit_tone] * sin_step[fit_tone];
+            cos_state[fit_tone] = next_cos;
+            sin_state[fit_tone] = next_sin;
 
             if ((sample_index & 0x00FFU) == 0x00FFU)
             {
-                float norm = sqrtf(cos_state[component] * cos_state[component] +
-                                   sin_state[component] * sin_state[component]);
+                float norm = sqrtf(cos_state[fit_tone] *
+                                       cos_state[fit_tone] +
+                                   sin_state[fit_tone] *
+                                       sin_state[fit_tone]);
                 if (norm > 0.0f)
                 {
-                    cos_state[component] /= norm;
-                    sin_state[component] /= norm;
+                    cos_state[fit_tone] /= norm;
+                    sin_state[fit_tone] /= norm;
                 }
             }
         }

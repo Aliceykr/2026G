@@ -358,7 +358,7 @@ void GSignalFlow_Process(void)
 
 static void GSignalFlow_StartOrRetry(uint32_t now)
 {
-    /* 没有收到明确的开始按键事件时，任何路径都不得启动FPGA采集。 */
+    /* 仅在屏幕单次测量或USART1连续测量已启用时启动FPGA采集。 */
     if (s_MeasurementEnabled == 0U)
     {
         s_State = G_FLOW_STATE_IDLE;
@@ -412,6 +412,14 @@ static void GSignalFlow_FinishCycle(uint32_t now)
         (s_ActiveMeasurementMode == G_FLOW_MODE_FREQUENCY))
     {
         s_HmiReadyPending = 1U;
+
+        /* 屏幕单次测量结束后恢复上电自动开启的USART1连续采集。 */
+        if (s_SerialStreamEnabled != 0U)
+        {
+            s_ActiveMeasurementMode = G_FLOW_MODE_SERIAL_STREAM;
+            s_MeasurementEnabled = 1U;
+            s_NextActionTick = now + G_FLOW_STREAM_INTERVAL_MS;
+        }
     }
 }
 
@@ -432,7 +440,6 @@ static void GSignalFlow_AbortCycle(const char *stage,
         return;
     }
 
-    s_SerialStreamEnabled = 0U;
     s_MeasurementEnabled = 0U;
     s_State = G_FLOW_STATE_HOLD;
     if (((s_ActiveMeasurementMode == G_FLOW_MODE_TIME) ||
@@ -441,6 +448,16 @@ static void GSignalFlow_AbortCycle(const char *stage,
     {
         s_HmiReadyPending = 0U;
         TjcHmi_SetStatusText(hmi_status);
+    }
+
+    /* 屏幕测量失败只报告本次错误，不关闭USART1自动连续采集。 */
+    if (s_SerialStreamEnabled != 0U)
+    {
+        s_ActiveMeasurementMode = G_FLOW_MODE_SERIAL_STREAM;
+        s_MeasurementEnabled = 1U;
+        s_NextActionTick = HAL_GetTick() + G_FLOW_STREAM_RETRY_MS;
+        GSignalFlow_SendText(
+            "G_STREAM,state=retrying,after_ms=500\r\n");
     }
 }
 
@@ -538,7 +555,6 @@ static void GSignalFlow_HandleCommand(void)
         {
             if (s_ActiveMeasurementMode == G_FLOW_MODE_SERIAL_STREAM)
             {
-                s_SerialStreamEnabled = 0U;
                 s_PendingHmiMode = G_FLOW_MODE_TIME;
                 GSignalFlow_SendText(
                     "G_HMI,event=time,queued=after_stream_frame\r\n");
@@ -566,7 +582,6 @@ static void GSignalFlow_HandleCommand(void)
         {
             if (s_ActiveMeasurementMode == G_FLOW_MODE_SERIAL_STREAM)
             {
-                s_SerialStreamEnabled = 0U;
                 s_PendingHmiMode = G_FLOW_MODE_FREQUENCY;
                 GSignalFlow_SendText(
                     "G_HMI,event=frequency,queued=after_stream_frame\r\n");
@@ -646,7 +661,6 @@ static void GSignalFlow_HandleCommand(void)
 static void GSignalFlow_StartHmiMeasurement(GFlowMeasurementMode mode,
                                             uint32_t now)
 {
-    s_SerialStreamEnabled = 0U;
     s_ActiveMeasurementMode = mode;
     TjcHmi_SetComputeBusy(1U);
     s_HmiBusyUntilTick = now + G_FLOW_HMI_BUSY_MIN_MS;
@@ -1150,24 +1164,24 @@ static void GSignalFlow_UpdateHmiMeasurementField(uint8_t field)
     }
     if (field == 1U)
     {
-        GSignalFlow_FormatFixed2(s_Measurement.upp_mv,
+        GSignalFlow_FormatFixed3(s_Measurement.upp_mv,
                                  value_text,
                                  sizeof(value_text));
         (void)snprintf(text,
                        sizeof(text),
-                       "Vpp=%s mV",
+                       "Vpp=%smV",
                        value_text);
         tjc_send_txt("t1", "txt", text);
         return;
     }
     if (field == 2U)
     {
-        GSignalFlow_FormatFixed2(s_Measurement.urms_mv,
+        GSignalFlow_FormatFixed3(s_Measurement.urms_mv,
                                  value_text,
                                  sizeof(value_text));
         (void)snprintf(text,
                        sizeof(text),
-                       "Vrms=%s mV",
+                       "Vrms=%smV",
                        value_text);
         tjc_send_txt("t2", "txt", text);
         return;
@@ -1188,7 +1202,7 @@ static void GSignalFlow_UpdateHmiMeasurementField(uint8_t field)
 
         if (item != NULL)
         {
-            GSignalFlow_FormatFixed2(item->amplitude_mv,
+            GSignalFlow_FormatFixed3(item->amplitude_mv,
                                      value_text,
                                      sizeof(value_text));
             (void)snprintf(text,
@@ -1203,7 +1217,7 @@ static void GSignalFlow_UpdateHmiMeasurementField(uint8_t field)
         {
             (void)snprintf(text,
                            sizeof(text),
-                           "H=XXXHZ,XXX.XXmV");
+                           "H=XXXHZ,XXX.XXXmV");
         }
         tjc_send_txt(object_name, "txt", text);
         return;
@@ -1219,8 +1233,8 @@ static void GSignalFlow_UpdateHmiPlaceholders(void)
 static void GSignalFlow_UpdateHmiTimePlaceholders(void)
 {
     tjc_send_txt("t0", "txt", "F=XXXHZ");
-    tjc_send_txt("t1", "txt", "Vpp=XXX mV");
-    tjc_send_txt("t2", "txt", "Vrms=XXX mV");
+    tjc_send_txt("t1", "txt", "Vpp=XXX.XXXmV");
+    tjc_send_txt("t2", "txt", "Vrms=XXX.XXXmV");
 }
 
 static void GSignalFlow_UpdateHmiFrequencyPlaceholders(void)
@@ -1234,7 +1248,7 @@ static void GSignalFlow_UpdateHmiFrequencyPlaceholders(void)
 
         (void)snprintf(text,
                        sizeof(text),
-                       "H=XXXHZ,XXX.XXmV");
+                       "H=XXXHZ,XXX.XXXmV");
         tjc_send_txt(object_name, "txt", text);
     }
 }

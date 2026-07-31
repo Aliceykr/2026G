@@ -12,6 +12,14 @@ extern "C" {
 #define SPECTRUM_MAX_COMPONENTS     3U
 #define SPECTRUM_MIN_VALID_AMPLITUDE_CODES 16.0f
 
+/*
+ * 0：当前量产路径，保持已验证的约0.5 mV Vpp精度。
+ * 1：启用保留的0.2 mV实验路径（250 kHz混叠干扰联合拟合与拟合频率细化）。
+ */
+#ifndef SPECTRUM_ENABLE_02MV_EXPERIMENT
+#define SPECTRUM_ENABLE_02MV_EXPERIMENT 1U
+#endif
+
 #define SPECTRUM_STATUS_ERROR       0U
 #define SPECTRUM_STATUS_VALID       1U
 #define SPECTRUM_STATUS_NO_SIGNAL   2U
