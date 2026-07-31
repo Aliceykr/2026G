@@ -17,6 +17,8 @@ void GSignalFlow_Init(void);
  * 1. b0读取分析帧和5 MSPS波形帧，只更新t0/t1/t2/t6/s0。
  * 2. b2读取分析帧，更新t3/t4/t5/s1并通过t6显示测量状态。
  * 3. b1只使用最近一次b0缓存的波形帧切换s0的1/3周期。
+ * 4. 上电后USART1自动连续校准采集；发送'S'在当前帧结束后停止，
+ *    发送'C'可重新启动。连续模式只输出诊断数据，不更新屏幕控件。
  */
 void GSignalFlow_Process(void);
 

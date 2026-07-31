@@ -1,5 +1,7 @@
 #include "GMeasurementCalibration.h"
 
+#include <stddef.h>
+
 /*
  * 2026-07-29整机实测标定：
  * - 信号源负载设置为High-Z；
@@ -33,11 +35,33 @@ static const GMeasurementCalibrationPoint s_CalibrationPoints[] =
     {  500000.0f, 0.033301896f },  // 500 kHz (NEW)
 };
 
+/*
+ * 2026-07-31最终50 ohm接法实机采集：
+ * - 10~500 kHz，每10 kHz一个频点；
+ * - 每点50/100/150/200/250 mVpp五档；
+ * - 每档20帧，使用原始amplitude_codes中位数；
+ * - 二维表直接输出最终分量峰值mV，不再额外应用0.5缩放。
+ */
+#include "../../CalibrationData/amplitude_full_2d.inc"
+
+/*
+ * 通用相位响应候选表。由94条H2~H10相对相位约束求解，去除了任意
+ * 线性时延。当前约束RMS残差约0.099度、最大约0.29度，必须通过
+ * 烧录后的组合信号Vpp实测后才能判定为最终表。
+ */
+#include "../../CalibrationData/phase_w0_001.inc"
+
 static const GMeasurementCalibration s_Calibration =
 {
     s_CalibrationPoints,
     (uint8_t)(sizeof(s_CalibrationPoints) /
-              sizeof(s_CalibrationPoints[0]))
+              sizeof(s_CalibrationPoints[0])),
+    s_PhaseCalibrationPoints,
+    (uint8_t)(sizeof(s_PhaseCalibrationPoints) /
+              sizeof(s_PhaseCalibrationPoints[0])),
+    s_AmplitudeCalibrationRows,
+    (uint8_t)(sizeof(s_AmplitudeCalibrationRows) /
+              sizeof(s_AmplitudeCalibrationRows[0]))
 };
 
 const GMeasurementCalibration *GMeasurementCalibration_Get(void)

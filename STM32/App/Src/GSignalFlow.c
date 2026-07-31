@@ -29,6 +29,9 @@
 #define G_FLOW_SPECTRUM_MIN_HZ        10000UL
 #define G_FLOW_SPECTRUM_MAX_HZ        500000UL
 #define G_FLOW_BUTTON_DEBOUNCE_MS     120U
+#define G_FLOW_STREAM_INTERVAL_MS      20U
+#define G_FLOW_STREAM_RETRY_MS        500U
+#define G_FLOW_RAD_TO_DEG              57.29577951308232f
 
 typedef enum
 {
@@ -43,7 +46,8 @@ typedef enum
 {
     G_FLOW_MODE_NONE = 0,
     G_FLOW_MODE_TIME,
-    G_FLOW_MODE_FREQUENCY
+    G_FLOW_MODE_FREQUENCY,
+    G_FLOW_MODE_SERIAL_STREAM
 } GFlowMeasurementMode;
 
 static int16_t s_CaptureFrame[SPECTRUM_FRAME_LENGTH];
@@ -53,6 +57,7 @@ static GMeasurementResult s_Measurement;
 static GMeasurementWaveform s_Waveform;
 static GFlowState s_State;
 static GFlowMeasurementMode s_ActiveMeasurementMode;
+static GFlowMeasurementMode s_PendingHmiMode;
 static uint32_t s_NextActionTick;
 static uint32_t s_ReportSequence;
 static uint32_t s_ActiveSequence;
@@ -67,6 +72,7 @@ static uint8_t s_CycleChangePending;
 static uint8_t s_WaveFrameValid;
 static uint8_t s_MeasurementEnabled;
 static uint8_t s_HmiReadyPending;
+static uint8_t s_SerialStreamEnabled;
 static float s_TimeFundamentalHz;
 static uint32_t s_HmiBusyUntilTick;
 static uint32_t s_LastStartEventTick;
@@ -83,15 +89,31 @@ static void GSignalFlow_SendError(const char *stage);
 static void GSignalFlow_SendNoSignal(void);
 static void GSignalFlow_SendResult(void);
 static uint8_t GSignalFlow_SendMeasurement(void);
+static void GSignalFlow_SendCalibrationTelemetry(void);
 static uint32_t GSignalFlow_RoundPositive(float value);
 static void GSignalFlow_FormatFixed2(float value,
                                      char *buffer,
                                      size_t buffer_size);
+static void GSignalFlow_FormatFixed3(float value,
+                                     char *buffer,
+                                     size_t buffer_size);
+static void GSignalFlow_FormatFixed8(float value,
+                                     char *buffer,
+                                     size_t buffer_size);
+static void GSignalFlow_FormatSignedFixed2(float value,
+                                           char *buffer,
+                                           size_t buffer_size);
+static float GSignalFlow_PhaseSinDegrees(float phase_rad);
+static float GSignalFlow_WrapSignedDegrees(float phase_deg);
 static void GSignalFlow_StartOrRetry(uint32_t now);
 static void GSignalFlow_FinishCycle(uint32_t now);
 static void GSignalFlow_AbortCycle(const char *stage,
                                   const char *hmi_status);
+static void GSignalFlow_HandleSerialCommand(void);
 static void GSignalFlow_HandleCommand(void);
+static void GSignalFlow_StartHmiMeasurement(GFlowMeasurementMode mode,
+                                            uint32_t now);
+static void GSignalFlow_ServicePendingHmiMeasurement(uint32_t now);
 static void GSignalFlow_UpdateHmiPlaceholders(void);
 static void GSignalFlow_UpdateHmiTimePlaceholders(void);
 static void GSignalFlow_UpdateHmiFrequencyPlaceholders(void);
@@ -116,6 +138,7 @@ void GSignalFlow_Init(void)
     memset(s_SpectrumDisplay, 0, sizeof(s_SpectrumDisplay));
     s_State = G_FLOW_STATE_IDLE;
     s_ActiveMeasurementMode = G_FLOW_MODE_NONE;
+    s_PendingHmiMode = G_FLOW_MODE_NONE;
     s_NextActionTick = HAL_GetTick();
     s_ReportSequence = 0UL;
     s_ActiveSequence = 0UL;
@@ -129,6 +152,7 @@ void GSignalFlow_Init(void)
     s_WaveFrameValid = 0U;
     s_MeasurementEnabled = 0U;
     s_HmiReadyPending = 0U;
+    s_SerialStreamEnabled = 0U;
     s_TimeFundamentalHz = 0.0f;
     s_HmiBusyUntilTick = 0UL;
     s_LastStartEventTick = HAL_GetTick() - G_FLOW_BUTTON_DEBOUNCE_MS;
@@ -142,13 +166,26 @@ void GSignalFlow_Init(void)
     FpgaLink_Init();
     s_FpgaOnline = Fpga_ReadId(&s_FpgaId);
     GSignalFlow_SendStartup();
+    GSignalFlow_SendText(
+        "G_STREAM,ready=1,auto=1,cmd=C:restart,S:stop,query=?\r\n");
+
+    /* 上电后直接连续采集，不需要按屏幕按钮或从USART1发送命令。 */
+    s_SerialStreamEnabled = 1U;
+    s_ActiveMeasurementMode = G_FLOW_MODE_SERIAL_STREAM;
+    s_MeasurementEnabled = 1U;
+    s_State = G_FLOW_STATE_WAIT_RESTART;
+    s_NextActionTick = HAL_GetTick();
+    GSignalFlow_SendText(
+        "G_STREAM,state=running,mode=calibration,auto=1\r\n");
 }
 
 void GSignalFlow_Process(void)
 {
     uint32_t now = HAL_GetTick();
 
+    GSignalFlow_HandleSerialCommand();
     GSignalFlow_HandleCommand();
+    GSignalFlow_ServicePendingHmiMeasurement(now);
     GSignalFlow_ServiceHmiMeasurement();
 
     if (s_State == G_FLOW_STATE_IDLE)
@@ -173,9 +210,17 @@ void GSignalFlow_Process(void)
         return;
     }
 
-    /* 单次测量完成后保持本轮结果，直到再次按下测量按钮。 */
+    /* 单次测量保持结果；串口连续模式在间隔到达后自动开始下一帧。 */
     if (s_State == G_FLOW_STATE_HOLD)
     {
+        if ((s_SerialStreamEnabled != 0U) &&
+            (s_ActiveMeasurementMode == G_FLOW_MODE_SERIAL_STREAM) &&
+            ((int32_t)(now - s_NextActionTick) >= 0))
+        {
+            s_MeasurementEnabled = 1U;
+            s_State = G_FLOW_STATE_WAIT_RESTART;
+            s_NextActionTick = now;
+        }
         return;
     }
 
@@ -237,7 +282,10 @@ void GSignalFlow_Process(void)
                 s_ReportSequence++;
                 s_AnalysisElapsedMs = HAL_GetTick() - s_CycleStartTick;
                 GSignalFlow_SendNoSignal();
-                GSignalFlow_UpdateHmiNoSignal();
+                if (s_ActiveMeasurementMode != G_FLOW_MODE_SERIAL_STREAM)
+                {
+                    GSignalFlow_UpdateHmiNoSignal();
+                }
             }
             else
             {
@@ -255,6 +303,13 @@ void GSignalFlow_Process(void)
         if (GSignalFlow_SendMeasurement() == 0U)
         {
             GSignalFlow_AbortCycle("measurement", "CALC ERR");
+            return;
+        }
+        GSignalFlow_SendCalibrationTelemetry();
+
+        if (s_ActiveMeasurementMode == G_FLOW_MODE_SERIAL_STREAM)
+        {
+            GSignalFlow_FinishCycle(HAL_GetTick());
             return;
         }
 
@@ -341,23 +396,117 @@ static void GSignalFlow_StartOrRetry(uint32_t now)
 
 static void GSignalFlow_FinishCycle(uint32_t now)
 {
-    (void)now;
+    if ((s_ActiveMeasurementMode == G_FLOW_MODE_SERIAL_STREAM) &&
+        (s_SerialStreamEnabled != 0U))
+    {
+        s_MeasurementEnabled = 1U;
+        s_State = G_FLOW_STATE_HOLD;
+        s_HmiReadyPending = 0U;
+        s_NextActionTick = now + G_FLOW_STREAM_INTERVAL_MS;
+        return;
+    }
+
     s_MeasurementEnabled = 0U;
     s_State = G_FLOW_STATE_HOLD;
-    s_HmiReadyPending = 1U;
+    if ((s_ActiveMeasurementMode == G_FLOW_MODE_TIME) ||
+        (s_ActiveMeasurementMode == G_FLOW_MODE_FREQUENCY))
+    {
+        s_HmiReadyPending = 1U;
+    }
 }
 
 static void GSignalFlow_AbortCycle(const char *stage,
                                   const char *hmi_status)
 {
     GSignalFlow_SendError(stage);
+
+    if ((s_ActiveMeasurementMode == G_FLOW_MODE_SERIAL_STREAM) &&
+        (s_SerialStreamEnabled != 0U))
+    {
+        s_MeasurementEnabled = 1U;
+        s_State = G_FLOW_STATE_HOLD;
+        s_HmiReadyPending = 0U;
+        s_NextActionTick = HAL_GetTick() + G_FLOW_STREAM_RETRY_MS;
+        GSignalFlow_SendText(
+            "G_STREAM,state=retrying,after_ms=500\r\n");
+        return;
+    }
+
+    s_SerialStreamEnabled = 0U;
     s_MeasurementEnabled = 0U;
     s_State = G_FLOW_STATE_HOLD;
-    if ((s_ActiveMeasurementMode != G_FLOW_MODE_NONE) &&
+    if (((s_ActiveMeasurementMode == G_FLOW_MODE_TIME) ||
+         (s_ActiveMeasurementMode == G_FLOW_MODE_FREQUENCY)) &&
         (hmi_status != NULL))
     {
         s_HmiReadyPending = 0U;
         TjcHmi_SetStatusText(hmi_status);
+    }
+}
+
+static void GSignalFlow_HandleSerialCommand(void)
+{
+    uint8_t byte;
+
+    while (GSerial_ReadByte(&byte) != 0U)
+    {
+        uint32_t now = HAL_GetTick();
+
+        if ((byte == (uint8_t)'C') || (byte == (uint8_t)'c'))
+        {
+            if ((s_State != G_FLOW_STATE_IDLE) &&
+                (s_State != G_FLOW_STATE_HOLD))
+            {
+                GSignalFlow_SendText(
+                    "G_STREAM,state=busy,cmd=C\r\n");
+                continue;
+            }
+
+            s_PendingHmiMode = G_FLOW_MODE_NONE;
+            s_SerialStreamEnabled = 1U;
+            s_ActiveMeasurementMode = G_FLOW_MODE_SERIAL_STREAM;
+            s_MeasurementEnabled = 1U;
+            s_HmiReadyPending = 0U;
+            s_State = G_FLOW_STATE_WAIT_RESTART;
+            s_NextActionTick = now;
+            GSignalFlow_SendText(
+                "G_STREAM,state=running,mode=calibration\r\n");
+            continue;
+        }
+
+        if ((byte == (uint8_t)'S') || (byte == (uint8_t)'s'))
+        {
+            uint8_t was_stream =
+                ((s_ActiveMeasurementMode == G_FLOW_MODE_SERIAL_STREAM) ||
+                 (s_SerialStreamEnabled != 0U)) ? 1U : 0U;
+
+            s_SerialStreamEnabled = 0U;
+            if ((s_State == G_FLOW_STATE_IDLE) ||
+                (s_State == G_FLOW_STATE_HOLD))
+            {
+                s_MeasurementEnabled = 0U;
+                if (s_ActiveMeasurementMode == G_FLOW_MODE_SERIAL_STREAM)
+                {
+                    s_ActiveMeasurementMode = G_FLOW_MODE_NONE;
+                }
+                GSignalFlow_SendText(
+                    (was_stream != 0U)
+                        ? "G_STREAM,state=stopped\r\n"
+                        : "G_STREAM,state=idle\r\n");
+            }
+            else if (s_ActiveMeasurementMode == G_FLOW_MODE_SERIAL_STREAM)
+            {
+                GSignalFlow_SendText(
+                    "G_STREAM,state=stopping,after=current_frame\r\n");
+            }
+            continue;
+        }
+
+        if (byte == (uint8_t)'?')
+        {
+            GSignalFlow_SendText(
+                "G_STREAM,cmd=C:start_continuous,S:stop,baud=115200,format=8N1\r\n");
+        }
     }
 }
 
@@ -383,27 +532,23 @@ static void GSignalFlow_HandleCommand(void)
         }
         s_LastStartEventTick = now;
 
-        /* FPGA采集链一次只执行一个任务，忙时不打断当前任务。 */
+        /* 连续串口帧完成后自动执行排队的屏幕时域任务。 */
         if ((s_State != G_FLOW_STATE_IDLE) &&
             (s_State != G_FLOW_STATE_HOLD))
         {
+            if (s_ActiveMeasurementMode == G_FLOW_MODE_SERIAL_STREAM)
+            {
+                s_SerialStreamEnabled = 0U;
+                s_PendingHmiMode = G_FLOW_MODE_TIME;
+                GSignalFlow_SendText(
+                    "G_HMI,event=time,queued=after_stream_frame\r\n");
+                return;
+            }
             GSignalFlow_SendText("G_HMI,event=time,ignored=busy\r\n");
             return;
         }
 
-        GSignalFlow_SendText("G_HMI,event=time\r\n");
-        s_ActiveMeasurementMode = G_FLOW_MODE_TIME;
-        TjcHmi_SetComputeBusy(1U);
-        s_HmiBusyUntilTick = now + G_FLOW_HMI_BUSY_MIN_MS;
-        s_HmiReadyPending = 0U;
-        s_MeasurementEnabled = 1U;
-        s_ActiveWaveformCycles = s_SelectedWaveformCycles;
-        s_CycleChangePending = 0U;
-        GSignalFlow_UpdateHmiTimePlaceholders();
-        tjc_clear_wave("s0.id", 0);
-        tjc_send_string("ref s0");
-        s_State = G_FLOW_STATE_WAIT_RESTART;
-        s_NextActionTick = now;
+        GSignalFlow_StartHmiMeasurement(G_FLOW_MODE_TIME, now);
         return;
     }
 
@@ -419,21 +564,20 @@ static void GSignalFlow_HandleCommand(void)
         if ((s_State != G_FLOW_STATE_IDLE) &&
             (s_State != G_FLOW_STATE_HOLD))
         {
+            if (s_ActiveMeasurementMode == G_FLOW_MODE_SERIAL_STREAM)
+            {
+                s_SerialStreamEnabled = 0U;
+                s_PendingHmiMode = G_FLOW_MODE_FREQUENCY;
+                GSignalFlow_SendText(
+                    "G_HMI,event=frequency,queued=after_stream_frame\r\n");
+                return;
+            }
             GSignalFlow_SendText(
                 "G_HMI,event=frequency,ignored=busy\r\n");
             return;
         }
 
-        GSignalFlow_SendText("G_HMI,event=frequency\r\n");
-        s_ActiveMeasurementMode = G_FLOW_MODE_FREQUENCY;
-        TjcHmi_SetComputeBusy(1U);
-        s_HmiBusyUntilTick = now + G_FLOW_HMI_BUSY_MIN_MS;
-        s_HmiReadyPending = 0U;
-        s_MeasurementEnabled = 1U;
-        GSignalFlow_UpdateHmiFrequencyPlaceholders();
-        (void)GSignalFlow_UpdateHmiSpectrum(0U);
-        s_State = G_FLOW_STATE_WAIT_RESTART;
-        s_NextActionTick = now;
+        GSignalFlow_StartHmiMeasurement(G_FLOW_MODE_FREQUENCY, now);
         return;
     }
 
@@ -497,6 +641,52 @@ static void GSignalFlow_HandleCommand(void)
                        apply_mode);
         GSignalFlow_SendText(buffer);
     }
+}
+
+static void GSignalFlow_StartHmiMeasurement(GFlowMeasurementMode mode,
+                                            uint32_t now)
+{
+    s_SerialStreamEnabled = 0U;
+    s_ActiveMeasurementMode = mode;
+    TjcHmi_SetComputeBusy(1U);
+    s_HmiBusyUntilTick = now + G_FLOW_HMI_BUSY_MIN_MS;
+    s_HmiReadyPending = 0U;
+    s_MeasurementEnabled = 1U;
+
+    if (mode == G_FLOW_MODE_TIME)
+    {
+        GSignalFlow_SendText("G_HMI,event=time\r\n");
+        s_ActiveWaveformCycles = s_SelectedWaveformCycles;
+        s_CycleChangePending = 0U;
+        GSignalFlow_UpdateHmiTimePlaceholders();
+        tjc_clear_wave("s0.id", 0);
+        tjc_send_string("ref s0");
+    }
+    else
+    {
+        GSignalFlow_SendText("G_HMI,event=frequency\r\n");
+        GSignalFlow_UpdateHmiFrequencyPlaceholders();
+        (void)GSignalFlow_UpdateHmiSpectrum(0U);
+    }
+
+    s_State = G_FLOW_STATE_WAIT_RESTART;
+    s_NextActionTick = now;
+}
+
+static void GSignalFlow_ServicePendingHmiMeasurement(uint32_t now)
+{
+    GFlowMeasurementMode mode;
+
+    if ((s_PendingHmiMode == G_FLOW_MODE_NONE) ||
+        ((s_State != G_FLOW_STATE_IDLE) &&
+         (s_State != G_FLOW_STATE_HOLD)))
+    {
+        return;
+    }
+
+    mode = s_PendingHmiMode;
+    s_PendingHmiMode = G_FLOW_MODE_NONE;
+    GSignalFlow_StartHmiMeasurement(mode, now);
 }
 
 static void GSignalFlow_SendText(const char *text)
@@ -740,6 +930,182 @@ static uint8_t GSignalFlow_SendMeasurement(void)
 
     GSignalFlow_SendText(buffer);
     return 1U;
+}
+
+static void GSignalFlow_SendCalibrationTelemetry(void)
+{
+    char buffer[256];
+    char f0_text[24];
+    char upp_text[24];
+    char urms_text[24];
+    float reference_phase_deg = 0.0f;
+    uint8_t reference_valid = 0U;
+    uint8_t component;
+    int written;
+
+    GSignalFlow_FormatFixed2(s_Measurement.fundamental_hz,
+                             f0_text,
+                             sizeof(f0_text));
+    GSignalFlow_FormatFixed3(s_Measurement.upp_mv,
+                             upp_text,
+                             sizeof(upp_text));
+    GSignalFlow_FormatFixed3(s_Measurement.urms_mv,
+                             urms_text,
+                             sizeof(urms_text));
+    (void)snprintf(buffer,
+                   sizeof(buffer),
+                   "G_CAL,seq=%lu,f0=%sHz,n=%u,upp=%smV,urms=%smV,t_ms=%lu\r\n",
+                   (unsigned long)s_ActiveSequence,
+                   f0_text,
+                   (unsigned int)s_Measurement.component_count,
+                   upp_text,
+                   urms_text,
+                   (unsigned long)s_AnalysisElapsedMs);
+    GSignalFlow_SendText(buffer);
+
+    for (component = 0U;
+         component < s_Result.component_count;
+         component++)
+    {
+        if (s_Result.components[component].harmonic == 1U)
+        {
+            reference_phase_deg = GSignalFlow_PhaseSinDegrees(
+                s_Result.components[component].phase_rad);
+            reference_valid = 1U;
+            break;
+        }
+    }
+
+    written = snprintf(buffer,
+                       sizeof(buffer),
+                       "G_PHASE,seq=%lu,basis=sin,ref=%s",
+                       (unsigned long)s_ActiveSequence,
+                       (reference_valid != 0U) ? "H1" : "none");
+    if (written < 0)
+    {
+        return;
+    }
+
+    for (component = 0U;
+         (component < s_Result.component_count) &&
+         ((size_t)written < sizeof(buffer));
+         component++)
+    {
+        const SpectrumComponent *raw = &s_Result.components[component];
+        float phase_deg =
+            GSignalFlow_PhaseSinDegrees(raw->phase_rad);
+        float relative_deg = (reference_valid != 0U)
+            ? GSignalFlow_WrapSignedDegrees(
+                phase_deg -
+                (float)raw->harmonic * reference_phase_deg)
+            : 0.0f;
+        char phase_text[20];
+        char relative_text[20];
+        int appended;
+
+        GSignalFlow_FormatFixed2(phase_deg,
+                                 phase_text,
+                                 sizeof(phase_text));
+        GSignalFlow_FormatSignedFixed2(relative_deg,
+                                       relative_text,
+                                       sizeof(relative_text));
+        appended = snprintf(&buffer[written],
+                            sizeof(buffer) - (size_t)written,
+                            ",h%u=%sdeg:rel=%sdeg",
+                            (unsigned int)raw->harmonic,
+                            phase_text,
+                            relative_text);
+        if (appended < 0)
+        {
+            break;
+        }
+        if ((size_t)appended >= sizeof(buffer) - (size_t)written)
+        {
+            written = (int)(sizeof(buffer) - 1U);
+            break;
+        }
+        written += appended;
+    }
+
+    if ((size_t)written + 2U < sizeof(buffer))
+    {
+        buffer[written++] = '\r';
+        buffer[written++] = '\n';
+        buffer[written] = '\0';
+    }
+    else
+    {
+        buffer[sizeof(buffer) - 3U] = '\r';
+        buffer[sizeof(buffer) - 2U] = '\n';
+        buffer[sizeof(buffer) - 1U] = '\0';
+    }
+    GSignalFlow_SendText(buffer);
+
+    for (component = 0U;
+         (component < s_Result.component_count) &&
+         (component < s_Measurement.component_count);
+         component++)
+    {
+        const SpectrumComponent *raw = &s_Result.components[component];
+        const GMeasurementComponent *converted =
+            &s_Measurement.components[component];
+        float phase_deg =
+            GSignalFlow_PhaseSinDegrees(raw->phase_rad);
+        float relative_deg = (reference_valid != 0U)
+            ? GSignalFlow_WrapSignedDegrees(
+                phase_deg -
+                (float)raw->harmonic * reference_phase_deg)
+            : 0.0f;
+        float mv_per_code = 0.0f;
+        char frequency_text[24];
+        char codes_text[24];
+        char scale_text[24];
+        char amplitude_text[24];
+        char phase_text[20];
+        char relative_text[20];
+
+        if (raw->amplitude_codes > 0.0f)
+        {
+            mv_per_code = converted->amplitude_mv /
+                          raw->amplitude_codes;
+#if G_MEASUREMENT_ENABLE_50_OHM_SCALE
+            mv_per_code /= G_MEASUREMENT_50_OHM_AMPLITUDE_SCALE;
+#endif
+        }
+
+        GSignalFlow_FormatFixed2(raw->frequency_hz,
+                                 frequency_text,
+                                 sizeof(frequency_text));
+        GSignalFlow_FormatFixed3(raw->amplitude_codes,
+                                 codes_text,
+                                 sizeof(codes_text));
+        GSignalFlow_FormatFixed8(mv_per_code,
+                                 scale_text,
+                                 sizeof(scale_text));
+        GSignalFlow_FormatFixed3(converted->amplitude_mv,
+                                 amplitude_text,
+                                 sizeof(amplitude_text));
+        GSignalFlow_FormatFixed2(phase_deg,
+                                 phase_text,
+                                 sizeof(phase_text));
+        GSignalFlow_FormatSignedFixed2(relative_deg,
+                                       relative_text,
+                                       sizeof(relative_text));
+
+        (void)snprintf(
+            buffer,
+            sizeof(buffer),
+            "G_COMP,seq=%lu,h=%u,f=%sHz,codes=%s,k=%smV/code,amp=%smV,phase_sin=%sdeg,rel=%sdeg\r\n",
+            (unsigned long)s_ActiveSequence,
+            (unsigned int)raw->harmonic,
+            frequency_text,
+            codes_text,
+            scale_text,
+            amplitude_text,
+            phase_text,
+            relative_text);
+        GSignalFlow_SendText(buffer);
+    }
 }
 
 static void GSignalFlow_UpdateHmiTimeMeasurement(void)
@@ -1251,6 +1617,99 @@ static void GSignalFlow_FormatFixed2(float value,
                    "%lu.%02lu",
                    (unsigned long)(scaled / 100UL),
                    (unsigned long)(scaled % 100UL));
+}
+
+static void GSignalFlow_FormatFixed3(float value,
+                                     char *buffer,
+                                     size_t buffer_size)
+{
+    uint32_t scaled;
+
+    if ((buffer == NULL) || (buffer_size == 0U))
+    {
+        return;
+    }
+
+    scaled = GSignalFlow_RoundPositive(value * 1000.0f);
+    (void)snprintf(buffer,
+                   buffer_size,
+                   "%lu.%03lu",
+                   (unsigned long)(scaled / 1000UL),
+                   (unsigned long)(scaled % 1000UL));
+}
+
+static void GSignalFlow_FormatFixed8(float value,
+                                     char *buffer,
+                                     size_t buffer_size)
+{
+    uint32_t scaled;
+
+    if ((buffer == NULL) || (buffer_size == 0U))
+    {
+        return;
+    }
+
+    scaled = GSignalFlow_RoundPositive(value * 100000000.0f);
+    (void)snprintf(buffer,
+                   buffer_size,
+                   "%lu.%08lu",
+                   (unsigned long)(scaled / 100000000UL),
+                   (unsigned long)(scaled % 100000000UL));
+}
+
+static void GSignalFlow_FormatSignedFixed2(float value,
+                                           char *buffer,
+                                           size_t buffer_size)
+{
+    char sign = '+';
+    uint32_t scaled;
+
+    if ((buffer == NULL) || (buffer_size == 0U))
+    {
+        return;
+    }
+
+    if (value < 0.0f)
+    {
+        sign = '-';
+        value = -value;
+    }
+
+    scaled = GSignalFlow_RoundPositive(value * 100.0f);
+    (void)snprintf(buffer,
+                   buffer_size,
+                   "%c%lu.%02lu",
+                   sign,
+                   (unsigned long)(scaled / 100UL),
+                   (unsigned long)(scaled % 100UL));
+}
+
+static float GSignalFlow_PhaseSinDegrees(float phase_rad)
+{
+    float phase_deg = phase_rad * G_FLOW_RAD_TO_DEG + 90.0f;
+
+    while (phase_deg < 0.0f)
+    {
+        phase_deg += 360.0f;
+    }
+    while (phase_deg >= 360.0f)
+    {
+        phase_deg -= 360.0f;
+    }
+    return phase_deg;
+}
+
+static float GSignalFlow_WrapSignedDegrees(float phase_deg)
+{
+    while (phase_deg <= -180.0f)
+    {
+        phase_deg += 360.0f;
+    }
+    while (phase_deg > 180.0f)
+    {
+        phase_deg -= 360.0f;
+    }
+    return phase_deg;
 }
 
 const GMeasurementResult *GSignalFlow_GetLatestMeasurement(void)

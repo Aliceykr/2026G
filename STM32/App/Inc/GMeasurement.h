@@ -11,6 +11,7 @@ extern "C" {
 
 #define G_MEASUREMENT_WAVEFORM_SAMPLE_RATE_HZ  5000000.0f
 #define G_MEASUREMENT_WAVEFORM_POINTS          256U
+#define G_MEASUREMENT_MAX_AMPLITUDE_LEVELS      5U
 
 /*
  * 50 ohm信号源幅值换算。
@@ -29,10 +30,45 @@ typedef struct
     float mv_per_code;
 } GMeasurementCalibrationPoint;
 
+/*
+ * 测量链的通用相位响应误差点。
+ *
+ * phase_error_rad 不是单次采集的绝对相位，而是已经去除任意线性时延后、
+ * 随绝对频率变化的连续展开相位误差 P(f)。标定工具必须先对相位解包，
+ * 频点之间再由固件线性插值。
+ */
+typedef struct
+{
+    float frequency_hz;
+    float phase_error_rad;
+} GMeasurementPhaseCalibrationPoint;
+
+typedef struct
+{
+    float amplitude_codes;
+    float peak_mv;
+} GMeasurementAmplitudeCalibrationLevel;
+
+/*
+ * 同一绝对频率下的码值到最终峰值毫伏分段曲线。
+ * peak_mv 已经是最终50 ohm显示口径，使用本曲线时不再额外乘0.5。
+ */
+typedef struct
+{
+    float frequency_hz;
+    uint8_t level_count;
+    GMeasurementAmplitudeCalibrationLevel
+        levels[G_MEASUREMENT_MAX_AMPLITUDE_LEVELS];
+} GMeasurementAmplitudeCalibrationRow;
+
 typedef struct
 {
     const GMeasurementCalibrationPoint *points;
     uint8_t point_count;
+    const GMeasurementPhaseCalibrationPoint *phase_points;
+    uint8_t phase_point_count;
+    const GMeasurementAmplitudeCalibrationRow *amplitude_rows;
+    uint8_t amplitude_row_count;
 } GMeasurementCalibration;
 
 typedef struct

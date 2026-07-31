@@ -6,12 +6,33 @@
 
 #define G_MEASUREMENT_TWO_PI              6.28318530717958647692f
 #define G_MEASUREMENT_RECONSTRUCT_POINTS  2048U
+#define G_MEASUREMENT_EXTREMUM_ITERATIONS  18U
+#define G_MEASUREMENT_GOLDEN_RATIO         0.61803398874989484820f
 
 static uint8_t GMeasurement_ValidateCalibration(
     const GMeasurementCalibration *calibration);
 static float GMeasurement_GetMvPerCode(
     const GMeasurementCalibration *calibration,
     float frequency_hz);
+static float GMeasurement_GetAmplitudeMv(
+    const GMeasurementCalibration *calibration,
+    float frequency_hz,
+    float amplitude_codes);
+static float GMeasurement_ConvertAmplitudeRow(
+    const GMeasurementAmplitudeCalibrationRow *row,
+    float amplitude_codes);
+static float GMeasurement_GetPhaseErrorRad(
+    const GMeasurementCalibration *calibration,
+    float frequency_hz);
+static float GMeasurement_EvaluateReconstruction(
+    const GMeasurementResult *measurement,
+    float base_phase);
+static float GMeasurement_RefineExtremum(
+    const GMeasurementResult *measurement,
+    float center_phase,
+    float half_width,
+    uint8_t find_maximum);
+static float GMeasurement_WrapRadians(float phase_rad);
 static float GMeasurement_CubicInterpolate(const int16_t *samples,
                                            float position);
 static int16_t GMeasurement_RoundToInt16(float value);
@@ -23,6 +44,9 @@ uint8_t GMeasurement_Convert(const SpectrumResult *spectrum,
     float sum_square = 0.0f;
     float minimum = 0.0f;
     float maximum = 0.0f;
+    float fundamental_phase_error_rad;
+    uint16_t minimum_point = 0U;
+    uint16_t maximum_point = 0U;
     uint16_t point;
     uint8_t component;
 
@@ -43,6 +67,9 @@ uint8_t GMeasurement_Convert(const SpectrumResult *spectrum,
     memset(measurement, 0, sizeof(*measurement));
     measurement->fundamental_hz = spectrum->fundamental_hz;
     measurement->component_count = spectrum->component_count;
+    fundamental_phase_error_rad =
+        GMeasurement_GetPhaseErrorRad(calibration,
+                                      spectrum->fundamental_hz);
 
     for (component = 0U;
          component < spectrum->component_count;
@@ -50,21 +77,24 @@ uint8_t GMeasurement_Convert(const SpectrumResult *spectrum,
     {
         const SpectrumComponent *input = &spectrum->components[component];
         GMeasurementComponent *output = &measurement->components[component];
-        float mv_per_code =
-            GMeasurement_GetMvPerCode(calibration, input->frequency_hz);
 
         output->harmonic = input->harmonic;
         output->frequency_hz = input->frequency_hz;
-#if G_MEASUREMENT_ENABLE_50_OHM_SCALE
         output->amplitude_mv =
-            input->amplitude_codes *
-            mv_per_code *
-            G_MEASUREMENT_50_OHM_AMPLITUDE_SCALE;
-#else
-        /* 保留原High-Z幅值换算路径。 */
-        output->amplitude_mv = input->amplitude_codes * mv_per_code;
-#endif
-        output->phase_rad = input->phase_rad;
+            GMeasurement_GetAmplitudeMv(calibration,
+                                        input->frequency_hz,
+                                        input->amplitude_codes);
+        /*
+         * 单次采集带有任意起始时刻，对第n次谐波表现为n倍公共相位。
+         * Vpp不受该线性相位影响，因此只消除测量链的非线性相位响应：
+         *   phase_error(f_n) - n * phase_error(f_0)
+         * 未提供相位表时两个查询均返回0，行为与原程序完全一致。
+         */
+        output->phase_rad = GMeasurement_WrapRadians(
+            input->phase_rad -
+            (GMeasurement_GetPhaseErrorRad(calibration,
+                                           input->frequency_hz) -
+             (float)input->harmonic * fundamental_phase_error_rad));
         sum_square += output->amplitude_mv * output->amplitude_mv;
     }
 
@@ -76,36 +106,51 @@ uint8_t GMeasurement_Convert(const SpectrumResult *spectrum,
             G_MEASUREMENT_TWO_PI *
             (float)point /
             (float)G_MEASUREMENT_RECONSTRUCT_POINTS;
-        float value = 0.0f;
-
-        for (component = 0U;
-             component < measurement->component_count;
-             component++)
-        {
-            const GMeasurementComponent *item =
-                &measurement->components[component];
-
-            value += item->amplitude_mv *
-                     cosf((float)item->harmonic * base_phase +
-                          item->phase_rad);
-        }
+        float value =
+            GMeasurement_EvaluateReconstruction(measurement, base_phase);
 
         if (point == 0U)
         {
             minimum = value;
             maximum = value;
+            minimum_point = point;
+            maximum_point = point;
         }
         else
         {
             if (value < minimum)
             {
                 minimum = value;
+                minimum_point = point;
             }
             if (value > maximum)
             {
                 maximum = value;
+                maximum_point = point;
             }
         }
+    }
+
+    /*
+     * 2048点只负责可靠地找到全局峰谷所在的小区间；再在相邻两个粗采样
+     * 间隔内做黄金分割细化。该步骤只计算最多三个已识别分量，不接触
+     * FPGA滤波器、FFT或原始时域波形。
+     */
+    {
+        const float phase_step =
+            G_MEASUREMENT_TWO_PI /
+            (float)G_MEASUREMENT_RECONSTRUCT_POINTS;
+
+        maximum = GMeasurement_RefineExtremum(
+            measurement,
+            phase_step * (float)maximum_point,
+            phase_step,
+            1U);
+        minimum = GMeasurement_RefineExtremum(
+            measurement,
+            phase_step * (float)minimum_point,
+            phase_step,
+            0U);
     }
 
     measurement->upp_mv = maximum - minimum;
@@ -115,9 +160,9 @@ uint8_t GMeasurement_Convert(const SpectrumResult *spectrum,
         measurement->spur_valid = 1U;
         measurement->spur_frequency_hz = spectrum->spur_frequency_hz;
         measurement->spur_amplitude_mv =
-            spectrum->spur_amplitude_codes *
-            GMeasurement_GetMvPerCode(calibration,
-                                      spectrum->spur_frequency_hz);
+            GMeasurement_GetAmplitudeMv(calibration,
+                                        spectrum->spur_frequency_hz,
+                                        spectrum->spur_amplitude_codes);
     }
 
     measurement->valid = 1U;
@@ -331,6 +376,83 @@ static uint8_t GMeasurement_ValidateCalibration(
         }
     }
 
+    if (calibration->phase_point_count > 0U)
+    {
+        if (calibration->phase_points == NULL)
+        {
+            return 0U;
+        }
+
+        for (index = 0U;
+             index < calibration->phase_point_count;
+             index++)
+        {
+            const GMeasurementPhaseCalibrationPoint *point =
+                &calibration->phase_points[index];
+
+            if (point->frequency_hz <= 0.0f)
+            {
+                return 0U;
+            }
+
+            if ((index > 0U) &&
+                (point->frequency_hz <=
+                 calibration->phase_points[index - 1U].frequency_hz))
+            {
+                return 0U;
+            }
+        }
+    }
+
+    if (calibration->amplitude_row_count > 0U)
+    {
+        if (calibration->amplitude_rows == NULL)
+        {
+            return 0U;
+        }
+
+        for (index = 0U;
+             index < calibration->amplitude_row_count;
+             index++)
+        {
+            const GMeasurementAmplitudeCalibrationRow *row =
+                &calibration->amplitude_rows[index];
+            uint8_t level;
+
+            if ((row->frequency_hz <= 0.0f) ||
+                (row->level_count < 2U) ||
+                (row->level_count > G_MEASUREMENT_MAX_AMPLITUDE_LEVELS))
+            {
+                return 0U;
+            }
+            if ((index > 0U) &&
+                (row->frequency_hz <=
+                 calibration->amplitude_rows[index - 1U].frequency_hz))
+            {
+                return 0U;
+            }
+
+            for (level = 0U; level < row->level_count; level++)
+            {
+                const GMeasurementAmplitudeCalibrationLevel *item =
+                    &row->levels[level];
+
+                if ((item->amplitude_codes <= 0.0f) ||
+                    (item->peak_mv <= 0.0f))
+                {
+                    return 0U;
+                }
+                if ((level > 0U) &&
+                    ((item->amplitude_codes <=
+                      row->levels[level - 1U].amplitude_codes) ||
+                     (item->peak_mv <= row->levels[level - 1U].peak_mv)))
+                {
+                    return 0U;
+                }
+            }
+        }
+    }
+
     return 1U;
 }
 
@@ -365,6 +487,233 @@ static float GMeasurement_GetMvPerCode(
     }
 
     return calibration->points[calibration->point_count - 1U].mv_per_code;
+}
+
+static float GMeasurement_GetAmplitudeMv(
+    const GMeasurementCalibration *calibration,
+    float frequency_hz,
+    float amplitude_codes)
+{
+    uint8_t index;
+
+    if ((calibration->amplitude_rows != NULL) &&
+        (calibration->amplitude_row_count > 0U))
+    {
+        if ((calibration->amplitude_row_count == 1U) ||
+            (frequency_hz <= calibration->amplitude_rows[0].frequency_hz))
+        {
+            return GMeasurement_ConvertAmplitudeRow(
+                &calibration->amplitude_rows[0], amplitude_codes);
+        }
+
+        for (index = 1U;
+             index < calibration->amplitude_row_count;
+             index++)
+        {
+            const GMeasurementAmplitudeCalibrationRow *left =
+                &calibration->amplitude_rows[index - 1U];
+            const GMeasurementAmplitudeCalibrationRow *right =
+                &calibration->amplitude_rows[index];
+
+            if (frequency_hz <= right->frequency_hz)
+            {
+                float ratio =
+                    (frequency_hz - left->frequency_hz) /
+                    (right->frequency_hz - left->frequency_hz);
+                float left_mv =
+                    GMeasurement_ConvertAmplitudeRow(left, amplitude_codes);
+                float right_mv =
+                    GMeasurement_ConvertAmplitudeRow(right, amplitude_codes);
+
+                return left_mv + ratio * (right_mv - left_mv);
+            }
+        }
+
+        return GMeasurement_ConvertAmplitudeRow(
+            &calibration->amplitude_rows[
+                calibration->amplitude_row_count - 1U],
+            amplitude_codes);
+    }
+
+#if G_MEASUREMENT_ENABLE_50_OHM_SCALE
+    return amplitude_codes *
+           GMeasurement_GetMvPerCode(calibration, frequency_hz) *
+           G_MEASUREMENT_50_OHM_AMPLITUDE_SCALE;
+#else
+    return amplitude_codes *
+           GMeasurement_GetMvPerCode(calibration, frequency_hz);
+#endif
+}
+
+static float GMeasurement_ConvertAmplitudeRow(
+    const GMeasurementAmplitudeCalibrationRow *row,
+    float amplitude_codes)
+{
+    uint8_t level;
+
+    if (amplitude_codes <= row->levels[0].amplitude_codes)
+    {
+        return amplitude_codes *
+               row->levels[0].peak_mv /
+               row->levels[0].amplitude_codes;
+    }
+
+    for (level = 1U; level < row->level_count; level++)
+    {
+        const GMeasurementAmplitudeCalibrationLevel *left =
+            &row->levels[level - 1U];
+        const GMeasurementAmplitudeCalibrationLevel *right =
+            &row->levels[level];
+
+        if (amplitude_codes <= right->amplitude_codes)
+        {
+            float ratio =
+                (amplitude_codes - left->amplitude_codes) /
+                (right->amplitude_codes - left->amplitude_codes);
+
+            return left->peak_mv +
+                   ratio * (right->peak_mv - left->peak_mv);
+        }
+    }
+
+    {
+        const GMeasurementAmplitudeCalibrationLevel *left =
+            &row->levels[row->level_count - 2U];
+        const GMeasurementAmplitudeCalibrationLevel *right =
+            &row->levels[row->level_count - 1U];
+        float ratio =
+            (amplitude_codes - left->amplitude_codes) /
+            (right->amplitude_codes - left->amplitude_codes);
+
+        return left->peak_mv +
+               ratio * (right->peak_mv - left->peak_mv);
+    }
+}
+
+static float GMeasurement_GetPhaseErrorRad(
+    const GMeasurementCalibration *calibration,
+    float frequency_hz)
+{
+    uint8_t index;
+
+    if ((calibration->phase_points == NULL) ||
+        (calibration->phase_point_count == 0U))
+    {
+        return 0.0f;
+    }
+
+    if ((calibration->phase_point_count == 1U) ||
+        (frequency_hz <= calibration->phase_points[0].frequency_hz))
+    {
+        return calibration->phase_points[0].phase_error_rad;
+    }
+
+    for (index = 1U;
+         index < calibration->phase_point_count;
+         index++)
+    {
+        const GMeasurementPhaseCalibrationPoint *left =
+            &calibration->phase_points[index - 1U];
+        const GMeasurementPhaseCalibrationPoint *right =
+            &calibration->phase_points[index];
+
+        if (frequency_hz <= right->frequency_hz)
+        {
+            float ratio =
+                (frequency_hz - left->frequency_hz) /
+                (right->frequency_hz - left->frequency_hz);
+
+            return left->phase_error_rad +
+                   ratio *
+                       (right->phase_error_rad - left->phase_error_rad);
+        }
+    }
+
+    return calibration->phase_points[
+        calibration->phase_point_count - 1U].phase_error_rad;
+}
+
+static float GMeasurement_EvaluateReconstruction(
+    const GMeasurementResult *measurement,
+    float base_phase)
+{
+    float value = 0.0f;
+    uint8_t component;
+
+    for (component = 0U;
+         component < measurement->component_count;
+         component++)
+    {
+        const GMeasurementComponent *item =
+            &measurement->components[component];
+
+        value += item->amplitude_mv *
+                 cosf((float)item->harmonic * base_phase +
+                      item->phase_rad);
+    }
+
+    return value;
+}
+
+static float GMeasurement_RefineExtremum(
+    const GMeasurementResult *measurement,
+    float center_phase,
+    float half_width,
+    uint8_t find_maximum)
+{
+    float left = center_phase - half_width;
+    float right = center_phase + half_width;
+    float x1 = right - G_MEASUREMENT_GOLDEN_RATIO * (right - left);
+    float x2 = left + G_MEASUREMENT_GOLDEN_RATIO * (right - left);
+    float y1 = GMeasurement_EvaluateReconstruction(measurement, x1);
+    float y2 = GMeasurement_EvaluateReconstruction(measurement, x2);
+    uint8_t iteration;
+
+    for (iteration = 0U;
+         iteration < G_MEASUREMENT_EXTREMUM_ITERATIONS;
+         iteration++)
+    {
+        uint8_t keep_right =
+            (find_maximum != 0U) ? (uint8_t)(y2 > y1) :
+                                   (uint8_t)(y2 < y1);
+
+        if (keep_right != 0U)
+        {
+            left = x1;
+            x1 = x2;
+            y1 = y2;
+            x2 = left +
+                 G_MEASUREMENT_GOLDEN_RATIO * (right - left);
+            y2 = GMeasurement_EvaluateReconstruction(measurement, x2);
+        }
+        else
+        {
+            right = x2;
+            x2 = x1;
+            y2 = y1;
+            x1 = right -
+                 G_MEASUREMENT_GOLDEN_RATIO * (right - left);
+            y1 = GMeasurement_EvaluateReconstruction(measurement, x1);
+        }
+    }
+
+    return (find_maximum != 0U) ?
+           ((y1 > y2) ? y1 : y2) :
+           ((y1 < y2) ? y1 : y2);
+}
+
+static float GMeasurement_WrapRadians(float phase_rad)
+{
+    while (phase_rad <= -0.5f * G_MEASUREMENT_TWO_PI)
+    {
+        phase_rad += G_MEASUREMENT_TWO_PI;
+    }
+    while (phase_rad > 0.5f * G_MEASUREMENT_TWO_PI)
+    {
+        phase_rad -= G_MEASUREMENT_TWO_PI;
+    }
+
+    return phase_rad;
 }
 
 /*
