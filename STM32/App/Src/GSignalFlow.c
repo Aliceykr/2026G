@@ -1,6 +1,7 @@
 #include "GSignalFlow.h"
 
 #include "FpgaLink.h"
+#include "GHardwareRandom.h"
 #include "GMeasurementCalibration.h"
 #include "SpectrumAnalyzer.h"
 #include "GSerial.h"
@@ -32,6 +33,7 @@
 #define G_FLOW_STREAM_INTERVAL_MS      20U
 #define G_FLOW_STREAM_RETRY_MS        500U
 #define G_FLOW_RAD_TO_DEG              57.29577951308232f
+#define G_FLOW_VPP_RANDOM_MAX_MV         0.01f
 
 typedef enum
 {
@@ -613,6 +615,15 @@ static void GSignalFlow_HandleCommand(void)
         s_HalfMvQuantizationEnabled =
             (s_HalfMvQuantizationEnabled == 0U) ? 1U : 0U;
 
+        if (s_HalfMvQuantizationEnabled != 0U)
+        {
+            GHardwareRandom_Enable();
+        }
+        else
+        {
+            GHardwareRandom_Disable();
+        }
+
         (void)snprintf(
             buffer,
             sizeof(buffer),
@@ -914,7 +925,16 @@ static uint8_t GSignalFlow_SendMeasurement(void)
 
     if (s_HalfMvQuantizationEnabled != 0U)
     {
+        float random_mv;
+
         GMeasurement_QuantizeHalfMv(&s_Measurement);
+        if (GHardwareRandom_GetFloatBelow(
+                G_FLOW_VPP_RANDOM_MAX_MV,
+                &random_mv) != 0U)
+        {
+            /* 量化完成后只对最终Vpp增加[0, 0.01mV)硬件随机量。 */
+            s_Measurement.upp_mv += random_mv;
+        }
     }
 
     written = snprintf(

@@ -643,6 +643,11 @@
               <FilePath>../App/Src/GSignalFlow.c</FilePath>
             </File>
             <File>
+              <FileName>GHardwareRandom.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../App/Src/GHardwareRandom.c</FilePath>
+            </File>
+            <File>
               <FileName>SpectrumAnalyzer.c</FileName>
               <FileType>1</FileType>
               <FilePath>../App/Src/SpectrumAnalyzer.c</FilePath>

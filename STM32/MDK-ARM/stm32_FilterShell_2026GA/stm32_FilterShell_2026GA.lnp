@@ -25,6 +25,7 @@
 "stm32_filtershell_2026ga\system_stm32f4xx.o"
 "stm32_filtershell_2026ga\fpgalink.o"
 "stm32_filtershell_2026ga\gsignalflow.o"
+"stm32_filtershell_2026ga\ghardwarerandom.o"
 "stm32_filtershell_2026ga\spectrumanalyzer.o"
 "stm32_filtershell_2026ga\gmeasurement.o"
 "stm32_filtershell_2026ga\gmeasurementcalibration.o"
