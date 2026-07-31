@@ -1,6 +1,7 @@
 #include "tjc_usart_hmi.h"
 
 #include <stdio.h>
+#include <string.h>
 static uint32_t s_TestTick;
 
 uint32_t HAL_GetTick(void)
@@ -83,6 +84,20 @@ int main(void)
 
     TjcHmi_Init();
     s_TestTick = 0U;
+
+    TjcHmi_SetQuantizationEnabled(1U);
+    TjcHmi_SetComputeBusy(1U);
+    if (strncmp(str1, "t6.txt=\"1", 9U) != 0)
+    {
+        puts("FAIL TJC HMI quantization-on status prefix");
+        return 1;
+    }
+    TjcHmi_SetQuantizationEnabled(0U);
+    if (strncmp(str1, "t6.txt=\"0", 9U) != 0)
+    {
+        puts("FAIL TJC HMI quantization-off status prefix");
+        return 1;
+    }
 
     if (!ExpectEvent(button_one,
                      sizeof(button_one),

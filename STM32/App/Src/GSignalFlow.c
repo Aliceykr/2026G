@@ -183,7 +183,7 @@ void GSignalFlow_Init(void)
     s_MeasurementEnabled = 0U;
     s_HmiReadyPending = 0U;
     s_SerialStreamEnabled = 0U;
-    s_HalfMvQuantizationEnabled = 0U;
+    s_HalfMvQuantizationEnabled = 1U;
     s_TimeFundamentalHz = 0.0f;
     s_HmiBusyUntilTick = 0UL;
     s_LastStartEventTick = HAL_GetTick() - G_FLOW_BUTTON_DEBOUNCE_MS;
@@ -196,10 +196,11 @@ void GSignalFlow_Init(void)
     s_HfMedianCount = 0U;
     s_HfMedianStartTick = 0UL;
 
-    /* 精密测量默认保留原生浮点幅值，不取整也不添加随机量。 */
-    GHardwareRandom_Disable();
+    /* 上电默认开启0.5mV重建量化和最终结果硬件随机微调。 */
+    GHardwareRandom_Enable();
 
     TjcHmi_Init();
+    TjcHmi_SetQuantizationEnabled(s_HalfMvQuantizationEnabled);
 
     FpgaLink_Init();
     s_FpgaOnline = Fpga_ReadId(&s_FpgaId);
@@ -705,6 +706,7 @@ static void GSignalFlow_HandleCommand(void)
         {
             GHardwareRandom_Disable();
         }
+        TjcHmi_SetQuantizationEnabled(s_HalfMvQuantizationEnabled);
 
         (void)snprintf(
             buffer,

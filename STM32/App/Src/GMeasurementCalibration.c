@@ -37,7 +37,8 @@ static const GMeasurementCalibrationPoint s_CalibrationPoints[] =
 
 /*
  * RIGOL DG1022Z、50 ohm负载接法实机采集：
- * - 10~500 kHz，每10 kHz一个频点；
+ * - 10~500 kHz以10 kHz为基础网格，并在105 kHz、495 kHz
+ *   两个插值薄弱区增加实测节点；
  * - 每点10/20/30/40/50/100/150/200/250 mVpp九档；
  * - 每档25帧，使用原始amplitude_codes中位数；
  * - 二维表直接输出最终分量峰值mV，不再额外应用0.5缩放。

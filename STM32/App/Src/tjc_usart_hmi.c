@@ -94,6 +94,8 @@ static uint32_t s_NextStartLabelTick; /**< 下一次刷新静态文字的时刻�
 static volatile uint32_t s_RxErrorCount; /**< ORE/NE/FE/PE错误计数。 */
 static TjcHmiEvent s_PendingEvent; /**< get查询期间收到的按键事件。 */
 static uint8_t s_PendingCycles;    /**< 延迟事件携带的周期参数。 */
+static uint8_t s_QuantizationEnabled; /**< t6状态文字前的0/1量化标志。 */
+static char s_LastStatusText[16]; /**< b3切换后用于立即重发当前状态。 */
 
 /* 通用淘晶驰命令格式化缓冲区。所有调用都位于主循环，故不需要加锁。 */
 char str1[TJC_TEXT_BUFFER_LENGTH];
@@ -422,6 +424,11 @@ void TjcHmi_Init(void)
     s_RxErrorCount = 0UL;
     s_PendingEvent = TJC_HMI_EVENT_NONE;
     s_PendingCycles = 0U;
+    s_QuantizationEnabled = 0U;
+    (void)snprintf(s_LastStatusText,
+                   sizeof(s_LastStatusText),
+                   "%s",
+                   TJC_READY_TEXT);
     initRingBuffer();
     TjcHmi_UartInit();
     /* 从旧固件热更新时，先解除屏幕可能保留的暂停刷新状态。 */
@@ -513,12 +520,28 @@ void TjcHmi_SetComputeBusy(uint8_t busy)
         (busy != 0U) ? TJC_COMPUTING_TEXT : TJC_READY_TEXT);
 }
 
+void TjcHmi_SetQuantizationEnabled(uint8_t enabled)
+{
+    s_QuantizationEnabled = (enabled != 0U) ? 1U : 0U;
+    TjcHmi_SetStatusText(s_LastStatusText);
+}
+
 void TjcHmi_SetStatusText(const char *text)
 {
     if (text != NULL)
     {
         char status_text[64];
-        const char *display_text = text;
+        const char *display_text;
+
+        if (text != s_LastStatusText)
+        {
+            (void)snprintf(s_LastStatusText,
+                           sizeof(s_LastStatusText),
+                           "%s",
+                           text);
+        }
+        text = s_LastStatusText;
+        display_text = text;
 
         if (strcmp(text, TJC_COMPUTING_TEXT) == 0)
         {
@@ -539,7 +562,8 @@ void TjcHmi_SetStatusText(const char *text)
 
         (void)snprintf(status_text,
                        sizeof(status_text),
-                       TJC_STATUS_LABEL_GB2312 "\xA3\xBA%s",
+                       "%u" TJC_STATUS_LABEL_GB2312 "\xA3\xBA%s",
+                       (unsigned int)s_QuantizationEnabled,
                        display_text);
         tjc_send_txt("t6", "txt", status_text);
     }

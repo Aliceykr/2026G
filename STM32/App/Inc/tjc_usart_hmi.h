@@ -62,6 +62,11 @@ void UART4_IRQHandler(void);
  */
 uint8_t TjcHmi_ReadEvent(TjcHmiEvent *event, uint8_t *cycles);
 
+/*
+ * 设置量化开关并立即刷新t6前缀：开启显示“1状态:”，关闭显示“0状态:”。
+ */
+void TjcHmi_SetQuantizationEnabled(uint8_t enabled);
+
 /* t6中文状态显示：busy=1显示“状态:测量中”，busy=0显示“状态:就绪”。 */
 void TjcHmi_SetComputeBusy(uint8_t busy);
 void TjcHmi_SetStatusText(const char *text);

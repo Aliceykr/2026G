@@ -305,7 +305,7 @@ static int TestProductionCalibration(void)
         (calibration->phase_points == NULL) ||
         (calibration->phase_point_count != 50U) ||
         (calibration->amplitude_rows == NULL) ||
-        (calibration->amplitude_row_count != 50U))
+        (calibration->amplitude_row_count != 52U))
     {
         printf("FAIL production calibration point count\n");
         return 0;
@@ -330,10 +330,32 @@ static int TestProductionCalibration(void)
     {
         const GMeasurementAmplitudeCalibrationRow *row =
             &calibration->amplitude_rows[index];
+        double expected_frequency_hz;
         uint8_t level;
 
+        if (index < 10U)
+        {
+            expected_frequency_hz = 10000.0 * (double)(index + 1U);
+        }
+        else if (index == 10U)
+        {
+            expected_frequency_hz = 105000.0;
+        }
+        else if (index < 50U)
+        {
+            expected_frequency_hz = 10000.0 * (double)index;
+        }
+        else if (index == 50U)
+        {
+            expected_frequency_hz = 495000.0;
+        }
+        else
+        {
+            expected_frequency_hz = 500000.0;
+        }
+
         if (!NearlyEqual(row->frequency_hz,
-                         10000.0 * (double)(index + 1U),
+                         expected_frequency_hz,
                          0.01) ||
             (row->level_count != 9U))
         {
@@ -415,7 +437,7 @@ static int TestProductionCalibration(void)
         return 0;
     }
 
-    printf("PASS production 50x9 amplitude (%u nodes) and 50-point phase tables\n",
+    printf("PASS production 52x9 amplitude (%u nodes) and 50-point phase tables\n",
            verified_nodes);
     return 1;
 }
