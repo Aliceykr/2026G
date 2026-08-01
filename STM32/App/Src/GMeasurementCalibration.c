@@ -36,17 +36,13 @@ static const GMeasurementCalibrationPoint s_CalibrationPoints[] =
 };
 
 /*
- * RIGOL DG1022Z、50 ohm负载接法实机采集：
- * - 10~500 kHz以10 kHz为基础网格，并在105 kHz、495 kHz
- *   两个插值薄弱区增加实测节点；
+ * RIGOL DG4162、50 ohm、全部相位0度实机采集：
+ * - 10/30/50/100/105/150/200/300/400/450/495/500 kHz实测节点；
  * - 每点10/20/30/40/50/100/150/200/250 mVpp九档；
- * - 每档25帧，使用原始amplitude_codes中位数；
+ * - 每档15帧，使用原始amplitude_codes中位数；
  * - 二维表直接输出最终分量峰值mV，不再额外应用0.5缩放。
- * - 2026-08-01复测100/150/300/500 kHz、50~250 mVpp后，
- *   使用新采集的原始码值替换四个锚点，并按频率线性插值
- *   更新100~500 kHz中间行的50~250 mVpp五档节点。
  */
-#include "../../CalibrationData/rigol_amplitude_full_9level.inc"
+#include "../../CalibrationData/dg4162_zero_phase_amplitude.inc"
 
 /*
  * RIGOL DG1022Z、50 ohm接法的新相位响应候选表。
@@ -59,19 +55,19 @@ static const GMeasurementCalibrationPoint s_CalibrationPoints[] =
 #include "../../CalibrationData/rigol_phase_w0_001.inc"
 
 /*
- * DG1022Z谐波模式、f0=50 kHz、相位全0度实测。
- * H2~H8在50/70/100 mVpp以及不同伴随谐波下的倍率均值；
+ * DG4162谐波模式、f0=50/100 kHz、相位全0度实测。
+ * H2~H8使用60 mVpp并带一个伴随谐波得到的倍率均值；
  * 仅用于多分量测量中的Hn，H1和单正弦不应用。
  */
 static const GMeasurementHarmonicScalePoint s_HarmonicScalePoints[] =
 {
-    { 100000.0f, 1.000343571f },
-    { 150000.0f, 1.018352143f },
-    { 200000.0f, 1.018006071f },
-    { 250000.0f, 1.019570000f },
-    { 300000.0f, 1.019727857f },
-    { 350000.0f, 1.020183571f },
-    { 400000.0f, 1.019995000f }
+    { 100000.0f, 0.999655600f },
+    { 150000.0f, 1.016332300f },
+    { 200000.0f, 1.014666900f },
+    { 250000.0f, 1.013057600f },
+    { 300000.0f, 1.015022700f },
+    { 350000.0f, 1.019516600f },
+    { 400000.0f, 1.016432200f }
 };
 
 static const GMeasurementCalibration s_Calibration =

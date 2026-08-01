@@ -103,6 +103,8 @@ class Generator:
         self.kind = kind
         self.instrument = None
         self.is_rigol = False
+        self.identity = ""
+        self.rigol_model = ""
 
     def __enter__(self) -> "Generator":
         if self.kind in ("auto", "rigol"):
@@ -113,6 +115,9 @@ class Generator:
                 if "RIGOL" in identity.upper():
                     self.instrument = instrument
                     self.is_rigol = True
+                    self.identity = identity
+                    fields = [field.strip() for field in identity.split(",")]
+                    self.rigol_model = fields[1].upper() if len(fields) > 1 else ""
                     print(f"generator: {identity}")
                     return self
                 instrument.close()
@@ -125,6 +130,7 @@ class Generator:
         self.instrument = Vxi11Instrument(self.host, 3.0)
         self.instrument.open()
         identity = self.instrument.query("*IDN?")
+        self.identity = identity
         if self.kind == "siglent" and "SIGLENT" not in identity.upper():
             raise RuntimeError(f"expected SIGLENT generator, received: {identity}")
         print(f"generator: {identity}")
@@ -218,7 +224,14 @@ class Generator:
         if self.is_rigol:
             highest_order = max([order for order, _vpp, _phase in items], default=2)
             selected_orders = {order for order, _vpp, _phase in items}
-            user_phase_supported = highest_order <= 8
+            # DG1022Z exposes USER bits for H2..H8, while DG4000 series
+            # instruments expose a 15-bit H2..H16 mask.  DG4162 silently
+            # reads a short mask back as all zero, leaving harmonic mode on
+            # but suppressing every selected harmonic.
+            user_mask_highest_order = (
+                16 if self.rigol_model.startswith("DG4") else 8
+            )
+            user_phase_supported = highest_order <= user_mask_highest_order
             commands = [
                 ":OUTP1 OFF",
                 ":OUTP1:LOAD 50",
@@ -232,7 +245,7 @@ class Generator:
             if user_phase_supported:
                 user_mask = "X" + "".join(
                     "1" if order in selected_orders else "0"
-                    for order in range(2, 9)
+                    for order in range(2, user_mask_highest_order + 1)
                 )
                 commands.extend([
                     ":SOUR1:HARM:TYPE USER",
@@ -296,7 +309,7 @@ class Generator:
         return {order: phase_deg for order, _vpp, phase_deg in items}
 
     def restore(self) -> None:
-        self.sine(100000.0, 100.0, 0.0)
+        self.sine(100000.0, 200.0, 0.0)
 
 
 class OmniProbe:
@@ -426,6 +439,61 @@ def fit_amplitude(rows: list[dict], c_path: Path) -> None:
     print(f"worst one-frame equivalent peak noise: {worst_equivalent_noise:.6f} mV")
 
 
+def interpolate_amplitude_rows(
+    rows: list[dict], target_frequencies: list[float]
+) -> list[dict]:
+    grouped: dict[float, dict[float, dict]] = {}
+    for row in rows:
+        grouped.setdefault(float(row["frequency_hz"]), {})[
+            float(row["vpp_mv"])
+        ] = row
+    source_frequencies = sorted(grouped)
+    if not source_frequencies:
+        raise RuntimeError("amplitude CSV is empty")
+
+    result: list[dict] = []
+    numeric_fields = (
+        "codes_mean",
+        "codes_median",
+        "codes_stddev",
+        "measured_frequency_mean_hz",
+    )
+    for target in target_frequencies:
+        if target in grouped:
+            result.extend(dict(row) for row in grouped[target].values())
+            continue
+        if target < source_frequencies[0] or target > source_frequencies[-1]:
+            raise RuntimeError(f"amplitude grid frequency is out of range: {target}")
+        right_index = next(
+            index
+            for index, frequency in enumerate(source_frequencies)
+            if frequency > target
+        )
+        left_frequency = source_frequencies[right_index - 1]
+        right_frequency = source_frequencies[right_index]
+        left_rows = grouped[left_frequency]
+        right_rows = grouped[right_frequency]
+        if set(left_rows) != set(right_rows):
+            raise RuntimeError(
+                f"amplitude levels differ at {left_frequency} and {right_frequency} Hz"
+            )
+        ratio = ((target - left_frequency) /
+                 (right_frequency - left_frequency))
+        for vpp_mv in sorted(left_rows):
+            left = left_rows[vpp_mv]
+            right = right_rows[vpp_mv]
+            item = dict(left)
+            item["frequency_hz"] = target
+            item["vpp_mv"] = vpp_mv
+            for field in numeric_fields:
+                item[field] = (
+                    float(left[field]) +
+                    ratio * (float(right[field]) - float(left[field]))
+                )
+            result.append(item)
+    return result
+
+
 def amplitude_sweep(args) -> int:
     frequencies = parse_series(args.frequencies)
     amplitudes = parse_series(args.vpps)
@@ -503,6 +571,8 @@ def build_amplitude_table(args) -> int:
         rows = list(csv.DictReader(stream))
     if not rows:
         raise RuntimeError("amplitude CSV is empty")
+    if args.grid:
+        rows = interpolate_amplitude_rows(rows, parse_series(args.grid))
     fit_amplitude(rows, Path(args.output))
     return 0
 
@@ -534,7 +604,10 @@ def phase_sweep(args) -> int:
                 phase_items = []
                 phase_by_order: dict[int, float] = {}
                 for order in orders:
-                    phase = float((37 * order + args.phase_offset) % 360)
+                    if args.fixed_harmonic_phase is None:
+                        phase = float((37 * order + args.phase_offset) % 360)
+                    else:
+                        phase = float(args.fixed_harmonic_phase % 360.0)
                     phase_by_order[order] = phase
                     phase_items.append((order, args.harmonic_vpp, phase))
                 print(
@@ -767,6 +840,7 @@ def main() -> int:
     build_amplitude = subparsers.add_parser("build-amplitude-table")
     build_amplitude.add_argument("--input", default="CalibrationData/amplitude_raw.csv")
     build_amplitude.add_argument("--output", default="CalibrationData/amplitude_table.inc")
+    build_amplitude.add_argument("--grid", default=None)
     build_amplitude.set_defaults(func=build_amplitude_table)
 
     phase = subparsers.add_parser("phase-sweep")
@@ -781,6 +855,12 @@ def main() -> int:
         type=float,
         default=13.0,
         help="offset used to generate the harmonic relative-phase pattern",
+    )
+    phase.add_argument(
+        "--fixed-harmonic-phase",
+        type=float,
+        default=None,
+        help="set every selected harmonic to this relative phase",
     )
     phase.add_argument("--output", default="CalibrationData/phase_observations.csv")
     phase.set_defaults(func=phase_sweep)

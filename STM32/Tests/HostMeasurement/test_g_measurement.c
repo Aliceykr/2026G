@@ -281,7 +281,7 @@ static int TestFundamentalWeightedHarmonicScale(void)
         1U
     };
     static const float fundamentals[] =
-        { 100000.0f, 130000.0f, 160000.0f };
+        { 100000.0f, 105000.0f, 110000.0f };
     static const double expected_h2[] =
         { 49.0196078431, 49.5049504950, 50.0 };
     SpectrumResult spectrum;
@@ -320,7 +320,7 @@ static int TestFundamentalWeightedHarmonicScale(void)
         }
     }
 
-    puts("PASS fundamental-weighted harmonic scale 100k/130k/160k");
+    puts("PASS fundamental-weighted harmonic scale 100k/105k/110k");
     return 1;
 }
 

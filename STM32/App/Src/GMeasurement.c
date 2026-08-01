@@ -9,7 +9,7 @@
 #define G_MEASUREMENT_EXTREMUM_ITERATIONS  18U
 #define G_MEASUREMENT_GOLDEN_RATIO         0.61803398874989484820f
 #define G_MEASUREMENT_HARMONIC_SCALE_FULL_F0_HZ 100000.0f
-#define G_MEASUREMENT_HARMONIC_SCALE_OFF_F0_HZ  160000.0f
+#define G_MEASUREMENT_HARMONIC_SCALE_OFF_F0_HZ  110000.0f
 #define G_MEASUREMENT_HARMONIC_LOW_AMP_START_HZ 100000.0f
 #define G_MEASUREMENT_HARMONIC_LOW_AMP_FULL_HZ  200000.0f
 
@@ -621,11 +621,11 @@ static float GMeasurement_GetHarmonicMeasuredScale(
 
 apply_fundamental_weight:
     /*
-     * 当前谐波倍率表来自DG1022Z在50 kHz基频下的谐波模式。实测表明，
-     * 基频升至160 kHz时信号源不再出现该约2%的公共倍率；若仍按谐波
-     * 绝对频率直接套表，会令320/480 kHz分量低估约1.2 mV。
+     * 当前谐波倍率表来自DG4162在50/100 kHz基频、全部相位0度的
+     * 谐波模式。实测表明，基频升至110 kHz时该倍率已经消失；若仍按
+     * 旧DG1022Z的100~160 kHz区间渐退，会令110~150 kHz基频的Hn低估。
      *
-     * 快速版在100~160 kHz基频间连续退去这项“信号源模式”修正。
+     * 在100~110 kHz基频间连续退去这项“信号源模式”修正。
      * 频率响应和幅值二维标定仍照常应用，因此不会影响单正弦或H1。
      */
     if (fundamental_hz <= G_MEASUREMENT_HARMONIC_SCALE_FULL_F0_HZ)
