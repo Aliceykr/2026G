@@ -42,6 +42,9 @@ static const GMeasurementCalibrationPoint s_CalibrationPoints[] =
  * - 每点10/20/30/40/50/100/150/200/250 mVpp九档；
  * - 每档25帧，使用原始amplitude_codes中位数；
  * - 二维表直接输出最终分量峰值mV，不再额外应用0.5缩放。
+ * - 2026-08-01复测100/150/300/500 kHz、50~250 mVpp后，
+ *   使用新采集的原始码值替换四个锚点，并按频率线性插值
+ *   更新100~500 kHz中间行的50~250 mVpp五档节点。
  */
 #include "../../CalibrationData/rigol_amplitude_full_9level.inc"
 
@@ -65,7 +68,8 @@ static const GMeasurementCalibration s_Calibration =
               sizeof(s_PhaseCalibrationPoints[0])),
     s_AmplitudeCalibrationRows,
     (uint8_t)(sizeof(s_AmplitudeCalibrationRows) /
-              sizeof(s_AmplitudeCalibrationRows[0]))
+              sizeof(s_AmplitudeCalibrationRows[0])),
+    1U
 };
 
 const GMeasurementCalibration *GMeasurementCalibration_Get(void)
