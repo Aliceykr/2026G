@@ -15,6 +15,9 @@ extern "C" {
  */
 const GMeasurementCalibration *GMeasurementCalibration_Get(void);
 
+/* 返回2958bf3“随机数”版本使用的幅度/相位标定表。 */
+const GMeasurementCalibration *GMeasurementCalibration_GetLegacy(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -54,6 +54,15 @@ static const GMeasurementCalibrationPoint s_CalibrationPoints[] =
  */
 #include "../../CalibrationData/rigol_phase_w0_001.inc"
 
+/* 2958bf3“随机数”版本的原始五档幅度表和相位表。 */
+#define s_AmplitudeCalibrationRows s_LegacyAmplitudeCalibrationRows
+#include "../../CalibrationData/amplitude_full_2d.inc"
+#undef s_AmplitudeCalibrationRows
+
+#define s_PhaseCalibrationPoints s_LegacyPhaseCalibrationPoints
+#include "../../CalibrationData/phase_w0_001.inc"
+#undef s_PhaseCalibrationPoints
+
 /*
  * DG4162谐波模式、f0=50/100 kHz、相位全0度实测。
  * H2~H8使用60 mVpp并带一个伴随谐波得到的倍率均值；
@@ -70,7 +79,7 @@ static const GMeasurementHarmonicScalePoint s_HarmonicScalePoints[] =
     { 400000.0f, 1.016432200f }
 };
 
-static const GMeasurementCalibration s_Calibration =
+static const GMeasurementCalibration s_OptimizedCalibration =
 {
     s_CalibrationPoints,
     (uint8_t)(sizeof(s_CalibrationPoints) /
@@ -86,7 +95,27 @@ static const GMeasurementCalibration s_Calibration =
               sizeof(s_HarmonicScalePoints[0]))
 };
 
+static const GMeasurementCalibration s_LegacyCalibration =
+{
+    s_CalibrationPoints,
+    (uint8_t)(sizeof(s_CalibrationPoints) /
+              sizeof(s_CalibrationPoints[0])),
+    s_LegacyPhaseCalibrationPoints,
+    (uint8_t)(sizeof(s_LegacyPhaseCalibrationPoints) /
+              sizeof(s_LegacyPhaseCalibrationPoints[0])),
+    s_LegacyAmplitudeCalibrationRows,
+    (uint8_t)(sizeof(s_LegacyAmplitudeCalibrationRows) /
+              sizeof(s_LegacyAmplitudeCalibrationRows[0])),
+    NULL,
+    0U
+};
+
 const GMeasurementCalibration *GMeasurementCalibration_Get(void)
 {
-    return &s_Calibration;
+    return &s_OptimizedCalibration;
+}
+
+const GMeasurementCalibration *GMeasurementCalibration_GetLegacy(void)
+{
+    return &s_LegacyCalibration;
 }

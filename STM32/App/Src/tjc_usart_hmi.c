@@ -68,7 +68,9 @@
 #define TJC_TIME_LABEL_GB2312    "\xCA\xB1\xD3\xF2\xB2\xE2\xC1\xBF"
 #define TJC_TOGGLE_LABEL_GB2312  "\xC7\xD0\xBB\xBB\xD6\xDC\xC6\xDA"
 #define TJC_FREQUENCY_LABEL_GB2312 "\xC6\xB5\xD3\xF2\xB2\xE2\xC1\xBF"
-#define TJC_RANGE_LABEL_GB2312   "\xC1\xBF\xB3\xCC\xC7\xD0\xBB\xBB"
+#define TJC_FUNCTION_LABEL_GB2312 "\xB9\xA6\xC4\xDC\xC7\xD0\xBB\xBB"
+#define TJC_OPTIMIZED_GB2312     "\xD3\xC5\xBB\xAF\xB0\xE6"
+#define TJC_LEGACY_GB2312        "\xCB\xE6\xBB\xFA\xCA\xFD\xB0\xE6"
 #define TJC_COMPUTING_TEXT       "BUSY"
 #define TJC_READY_TEXT           "READY"
 #define TJC_STATUS_LABEL_GB2312  "\xD7\xB4\xCC\xAC"
@@ -95,6 +97,7 @@ static volatile uint32_t s_RxErrorCount; /**< ORE/NE/FE/PE错误计数。 */
 static TjcHmiEvent s_PendingEvent; /**< get查询期间收到的按键事件。 */
 static uint8_t s_PendingCycles;    /**< 延迟事件携带的周期参数。 */
 static uint8_t s_QuantizationEnabled; /**< t6状态文字前的0/1量化标志。 */
+static uint8_t s_OptimizedAlgorithmEnabled; /**< 1当前优化版，0随机数版。 */
 static char s_LastStatusText[16]; /**< b3切换后用于立即重发当前状态。 */
 
 /* 通用淘晶驰命令格式化缓冲区。所有调用都位于主循环，故不需要加锁。 */
@@ -304,7 +307,7 @@ static void TjcHmi_UpdateButtonText(void)
     tjc_send_txt("page0.b0", "txt", TJC_TIME_LABEL_GB2312);
     tjc_send_txt("page0.b1", "txt", TJC_TOGGLE_LABEL_GB2312);
     tjc_send_txt("page0.b2", "txt", TJC_FREQUENCY_LABEL_GB2312);
-    tjc_send_txt("page0.b3", "txt", TJC_RANGE_LABEL_GB2312);
+    tjc_send_txt("page0.b3", "txt", TJC_FUNCTION_LABEL_GB2312);
     s_NextStartLabelTick = now + TJC_START_LABEL_RETRY_MS;
 }
 
@@ -317,7 +320,7 @@ static void TjcHmi_UpdateButtonText(void)
  *   55 01 00 00 FF FF FF -> b0，时域测量
  *   55 02 00 00 FF FF FF -> b1，切换1/3周期
  *   55 03 00 00 FF FF FF -> b2，频域测量
- *   55 04 00 00 FF FF FF -> b3，量程切换
+ *   55 04 00 00 FF FF FF -> b3，功能切换
  */
 static uint8_t TjcHmi_DecodeFrame(TjcHmiEvent *event)
 {
@@ -349,9 +352,9 @@ static uint8_t TjcHmi_DecodeFrame(TjcHmiEvent *event)
         return 1U;
     }
 
-    if (s_RxFrame[1] == TJC_BUTTON_RANGE_TOGGLE)
+    if (s_RxFrame[1] == TJC_BUTTON_FUNCTION_TOGGLE)
     {
-        *event = TJC_HMI_EVENT_TOGGLE_RANGE;
+        *event = TJC_HMI_EVENT_TOGGLE_ALGORITHM;
         return 1U;
     }
 
@@ -424,7 +427,8 @@ void TjcHmi_Init(void)
     s_RxErrorCount = 0UL;
     s_PendingEvent = TJC_HMI_EVENT_NONE;
     s_PendingCycles = 0U;
-    s_QuantizationEnabled = 0U;
+    s_QuantizationEnabled = 1U;
+    s_OptimizedAlgorithmEnabled = 1U;
     (void)snprintf(s_LastStatusText,
                    sizeof(s_LastStatusText),
                    "%s",
@@ -526,6 +530,12 @@ void TjcHmi_SetQuantizationEnabled(uint8_t enabled)
     TjcHmi_SetStatusText(s_LastStatusText);
 }
 
+void TjcHmi_SetAlgorithmOptimized(uint8_t enabled)
+{
+    s_OptimizedAlgorithmEnabled = (enabled != 0U) ? 1U : 0U;
+    TjcHmi_SetStatusText(s_LastStatusText);
+}
+
 void TjcHmi_SetStatusText(const char *text)
 {
     if (text != NULL)
@@ -560,11 +570,14 @@ void TjcHmi_SetStatusText(const char *text)
             display_text = TJC_ERROR_GB2312;
         }
 
-        (void)snprintf(status_text,
-                       sizeof(status_text),
-                       "%u" TJC_STATUS_LABEL_GB2312 "\xA3\xBA%s",
-                       (unsigned int)s_QuantizationEnabled,
-                       display_text);
+        (void)snprintf(
+            status_text,
+            sizeof(status_text),
+            "%u%s " TJC_STATUS_LABEL_GB2312 "\xA3\xBA%s",
+            (unsigned int)s_QuantizationEnabled,
+            (s_OptimizedAlgorithmEnabled != 0U)
+                ? TJC_OPTIMIZED_GB2312 : TJC_LEGACY_GB2312,
+            display_text);
         tjc_send_txt("t6", "txt", status_text);
     }
 }

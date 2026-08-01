@@ -30,10 +30,12 @@
 #define G_FLOW_SPECTRUM_MIN_HZ        10000UL
 #define G_FLOW_SPECTRUM_MAX_HZ        500000UL
 #define G_FLOW_BUTTON_DEBOUNCE_MS     120U
-#define G_FLOW_STREAM_INTERVAL_MS       0U
+#define G_FLOW_STREAM_INTERVAL_OPT_MS    0U
+#define G_FLOW_STREAM_INTERVAL_LEGACY_MS 20U
 #define G_FLOW_STREAM_RETRY_MS        500U
 #define G_FLOW_RAD_TO_DEG              57.29577951308232f
-#define G_FLOW_VPP_RANDOM_MAX_MV        0.005f
+#define G_FLOW_RANDOM_MAX_OPT_MV         0.005f
+#define G_FLOW_RANDOM_MAX_LEGACY_MV      0.010f
 #define G_FLOW_HF_MEDIAN_FRAMES            25U
 #define G_FLOW_HF_MEDIAN_MIN_HZ       490000.0f
 #define G_FLOW_HF_MEDIAN_MAX_PEAK_MV      30.0f
@@ -65,6 +67,12 @@ typedef enum
     G_FLOW_MODE_SERIAL_STREAM
 } GFlowMeasurementMode;
 
+typedef enum
+{
+    G_FLOW_ALGORITHM_LEGACY_RANDOM = 0,
+    G_FLOW_ALGORITHM_OPTIMIZED
+} GFlowAlgorithmMode;
+
 static int16_t s_CaptureFrame[SPECTRUM_FRAME_LENGTH];
 static int16_t s_WaveCaptureFrame[SPECTRUM_FRAME_LENGTH];
 static SpectrumResult s_Result;
@@ -89,6 +97,7 @@ static uint8_t s_MeasurementEnabled;
 static uint8_t s_HmiReadyPending;
 static uint8_t s_SerialStreamEnabled;
 static uint8_t s_HalfMvQuantizationEnabled;
+static GFlowAlgorithmMode s_AlgorithmMode;
 static float s_TimeFundamentalHz;
 static uint32_t s_HmiBusyUntilTick;
 static uint32_t s_LastStartEventTick;
@@ -155,6 +164,10 @@ static void GSignalFlow_StoreHfMedianFrame(
     const GMeasurementResult *measurement);
 static void GSignalFlow_FinalizeHfMedian(void);
 static float GSignalFlow_Median25(const float *values);
+static uint8_t GSignalFlow_IsOptimizedAlgorithm(void);
+static const GMeasurementCalibration *
+    GSignalFlow_GetActiveCalibration(void);
+static uint32_t GSignalFlow_GetStreamIntervalMs(void);
 
 void GSignalFlow_Init(void)
 {
@@ -184,6 +197,7 @@ void GSignalFlow_Init(void)
     s_HmiReadyPending = 0U;
     s_SerialStreamEnabled = 0U;
     s_HalfMvQuantizationEnabled = 1U;
+    s_AlgorithmMode = G_FLOW_ALGORITHM_OPTIMIZED;
     s_TimeFundamentalHz = 0.0f;
     s_HmiBusyUntilTick = 0UL;
     s_LastStartEventTick = HAL_GetTick() - G_FLOW_BUTTON_DEBOUNCE_MS;
@@ -198,9 +212,11 @@ void GSignalFlow_Init(void)
 
     /* 上电默认开启0.5mV重建量化和最终结果硬件随机微调。 */
     GHardwareRandom_Enable();
+    SpectrumAnalyzer_SetOptimizedAlgorithm(1U);
 
     TjcHmi_Init();
     TjcHmi_SetQuantizationEnabled(s_HalfMvQuantizationEnabled);
+    TjcHmi_SetAlgorithmOptimized(1U);
 
     FpgaLink_Init();
     s_FpgaOnline = Fpga_ReadId(&s_FpgaId);
@@ -338,7 +354,7 @@ void GSignalFlow_Process(void)
         }
 
         if (GMeasurement_Convert(&s_Result,
-                                 GMeasurementCalibration_Get(),
+                                 GSignalFlow_GetActiveCalibration(),
                                  &s_Measurement) == 0U)
         {
             GSignalFlow_AbortCycle("measurement", "CALC ERR");
@@ -346,7 +362,8 @@ void GSignalFlow_Process(void)
         }
 
         use_hf_median =
-            ((s_ActiveMeasurementMode != G_FLOW_MODE_SERIAL_STREAM) &&
+            ((GSignalFlow_IsOptimizedAlgorithm() != 0U) &&
+             (s_ActiveMeasurementMode != G_FLOW_MODE_SERIAL_STREAM) &&
              ((s_HfMedianActive != 0U) ||
               (GSignalFlow_ShouldUseHfMedian(&s_Measurement) != 0U)))
                 ? 1U : 0U;
@@ -491,7 +508,7 @@ static void GSignalFlow_FinishCycle(uint32_t now)
         s_MeasurementEnabled = 1U;
         s_State = G_FLOW_STATE_HOLD;
         s_HmiReadyPending = 0U;
-        s_NextActionTick = now + G_FLOW_STREAM_INTERVAL_MS;
+        s_NextActionTick = now + GSignalFlow_GetStreamIntervalMs();
         return;
     }
 
@@ -507,7 +524,7 @@ static void GSignalFlow_FinishCycle(uint32_t now)
         {
             s_ActiveMeasurementMode = G_FLOW_MODE_SERIAL_STREAM;
             s_MeasurementEnabled = 1U;
-            s_NextActionTick = now + G_FLOW_STREAM_INTERVAL_MS;
+            s_NextActionTick = now + GSignalFlow_GetStreamIntervalMs();
         }
     }
 }
@@ -685,9 +702,9 @@ static void GSignalFlow_HandleCommand(void)
         return;
     }
 
-    if (event == TJC_HMI_EVENT_TOGGLE_RANGE)
+    if (event == TJC_HMI_EVENT_TOGGLE_ALGORITHM)
     {
-        char buffer[64];
+        char buffer[96];
 
         if ((uint32_t)(now - s_LastRangeEventTick) <
             G_FLOW_BUTTON_DEBOUNCE_MS)
@@ -695,24 +712,30 @@ static void GSignalFlow_HandleCommand(void)
             return;
         }
         s_LastRangeEventTick = now;
-        s_HalfMvQuantizationEnabled =
-            (s_HalfMvQuantizationEnabled == 0U) ? 1U : 0U;
+        s_AlgorithmMode =
+            (s_AlgorithmMode == G_FLOW_ALGORITHM_OPTIMIZED)
+                ? G_FLOW_ALGORITHM_LEGACY_RANDOM
+                : G_FLOW_ALGORITHM_OPTIMIZED;
 
-        if (s_HalfMvQuantizationEnabled != 0U)
-        {
-            GHardwareRandom_Enable();
-        }
-        else
-        {
-            GHardwareRandom_Disable();
-        }
-        TjcHmi_SetQuantizationEnabled(s_HalfMvQuantizationEnabled);
+        SpectrumAnalyzer_SetOptimizedAlgorithm(
+            GSignalFlow_IsOptimizedAlgorithm());
+        TjcHmi_SetAlgorithmOptimized(
+            GSignalFlow_IsOptimizedAlgorithm());
+        s_HfMedianActive = 0U;
+        s_HfMedianCount = 0U;
+        memset(s_HfMedianFrames, 0, sizeof(s_HfMedianFrames));
+        memset(&s_Result, 0, sizeof(s_Result));
+        memset(&s_Measurement, 0, sizeof(s_Measurement));
+        s_State = G_FLOW_STATE_WAIT_RESTART;
+        s_MeasurementEnabled = 1U;
+        s_NextActionTick = now;
 
         (void)snprintf(
             buffer,
             sizeof(buffer),
-            "G_HMI,event=range,half_mv=%s\r\n",
-            (s_HalfMvQuantizationEnabled != 0U) ? "on" : "off");
+            "G_HMI,event=function,algorithm=%s,half_mv=on\r\n",
+            (GSignalFlow_IsOptimizedAlgorithm() != 0U)
+                ? "optimized" : "random-2958bf3");
         GSignalFlow_SendText(buffer);
         return;
     }
@@ -1008,18 +1031,29 @@ static uint8_t GSignalFlow_SendMeasurement(void)
     if (s_HalfMvQuantizationEnabled != 0U)
     {
         float random_mv;
+        float random_limit;
 
-        GMeasurement_QuantizeHalfMv(&s_Measurement);
+        if (GSignalFlow_IsOptimizedAlgorithm() != 0U)
+        {
+            GMeasurement_QuantizeHalfMv(&s_Measurement);
+            random_limit = G_FLOW_RANDOM_MAX_OPT_MV;
+        }
+        else
+        {
+            GMeasurement_QuantizeHalfMvLegacy(&s_Measurement);
+            random_limit = G_FLOW_RANDOM_MAX_LEGACY_MV;
+        }
         if (GHardwareRandom_GetFloatBelow(
-                G_FLOW_VPP_RANDOM_MAX_MV,
+                random_limit,
                 &random_mv) != 0U)
         {
             /* 量化完成后对最终Vpp增加[0, 0.005mV)硬件随机量。 */
             s_Measurement.upp_mv += random_mv;
         }
-        if (GHardwareRandom_GetFloatBelow(
-                G_FLOW_VPP_RANDOM_MAX_MV,
-                &random_mv) != 0U)
+        if ((GSignalFlow_IsOptimizedAlgorithm() != 0U) &&
+            (GHardwareRandom_GetFloatBelow(
+                random_limit,
+                &random_mv) != 0U))
         {
             /* Vrms使用独立的[0, 0.005mV)硬件随机量。 */
             s_Measurement.urms_mv += random_mv;
@@ -1084,6 +1118,26 @@ static uint8_t GSignalFlow_SendMeasurement(void)
 
     GSignalFlow_SendText(buffer);
     return 1U;
+}
+
+static uint8_t GSignalFlow_IsOptimizedAlgorithm(void)
+{
+    return (s_AlgorithmMode == G_FLOW_ALGORITHM_OPTIMIZED) ? 1U : 0U;
+}
+
+static const GMeasurementCalibration *
+    GSignalFlow_GetActiveCalibration(void)
+{
+    return (GSignalFlow_IsOptimizedAlgorithm() != 0U)
+        ? GMeasurementCalibration_Get()
+        : GMeasurementCalibration_GetLegacy();
+}
+
+static uint32_t GSignalFlow_GetStreamIntervalMs(void)
+{
+    return (GSignalFlow_IsOptimizedAlgorithm() != 0U)
+        ? G_FLOW_STREAM_INTERVAL_OPT_MS
+        : G_FLOW_STREAM_INTERVAL_LEGACY_MS;
 }
 
 static uint8_t GSignalFlow_ShouldUseHfMedian(

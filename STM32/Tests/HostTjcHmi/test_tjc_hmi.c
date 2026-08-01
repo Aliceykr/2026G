@@ -113,7 +113,7 @@ int main(void)
                      0U) ||
         !ExpectEvent(button_range,
                      sizeof(button_range),
-                     TJC_HMI_EVENT_TOGGLE_RANGE,
+                     TJC_HMI_EVENT_TOGGLE_ALGORITHM,
                      0U) ||
         !ExpectEvent(noisy_button_three,
                      sizeof(noisy_button_three),

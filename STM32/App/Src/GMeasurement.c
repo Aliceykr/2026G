@@ -486,6 +486,35 @@ void GMeasurement_QuantizeHalfMv(GMeasurementResult *measurement)
     measurement->urms_mv = quantized.urms_mv;
 }
 
+void GMeasurement_QuantizeHalfMvLegacy(GMeasurementResult *measurement)
+{
+    GMeasurementResult quantized;
+    uint8_t component;
+
+    if ((measurement == NULL) ||
+        (measurement->valid == 0U) ||
+        (measurement->component_count == 0U) ||
+        (measurement->component_count > SPECTRUM_MAX_COMPONENTS))
+    {
+        return;
+    }
+
+    quantized = *measurement;
+    for (component = 0U;
+         component < quantized.component_count;
+         component++)
+    {
+        GMeasurementComponent *item =
+            &quantized.components[component];
+
+        item->amplitude_mv =
+            roundf(item->amplitude_mv * 2.0f) * 0.5f;
+    }
+
+    GMeasurement_UpdateUpp(&quantized);
+    measurement->upp_mv = quantized.upp_mv;
+}
+
 static float GMeasurement_GetMvPerCode(
     const GMeasurementCalibration *calibration,
     float frequency_hz)

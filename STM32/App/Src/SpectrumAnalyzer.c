@@ -36,6 +36,7 @@ static int16_t s_HannWindowQ15[SPECTRUM_FRAME_LENGTH];
 static uint8_t s_WindowReady;
 static uint8_t s_FftReady;
 static uint8_t s_LastSpectrumReady;
+static uint8_t s_OptimizedAlgorithmEnabled = 1U;
 static arm_rfft_fast_instance_f32 s_RfftInstance;
 
 static void SpectrumAnalyzer_InitWindow(void);
@@ -75,6 +76,11 @@ static uint8_t SpectrumAnalyzer_SolveLinear(float matrix[SPECTRUM_MAX_LS_COLUMNS
                                             float solution[SPECTRUM_MAX_LS_COLUMNS],
                                             uint8_t size);
 static void SpectrumAnalyzer_ComputeMetrics(SpectrumResult *result);
+
+void SpectrumAnalyzer_SetOptimizedAlgorithm(uint8_t enabled)
+{
+    s_OptimizedAlgorithmEnabled = (enabled != 0U) ? 1U : 0U;
+}
 
 uint8_t SpectrumAnalyzer_Run(const int16_t *samples, SpectrumResult *result)
 {
@@ -210,8 +216,14 @@ uint8_t SpectrumAnalyzer_Run(const int16_t *samples, SpectrumResult *result)
         uint8_t h;
         uint8_t new_count = 0U;
 
-        if (thresh < peaks[0].power * SPECTRUM_FUNDAMENTAL_MIN_POWER_RATIO)
-            thresh = peaks[0].power * SPECTRUM_FUNDAMENTAL_MIN_POWER_RATIO;
+        {
+            float minimum_ratio =
+                (s_OptimizedAlgorithmEnabled != 0U)
+                    ? SPECTRUM_FUNDAMENTAL_MIN_POWER_RATIO
+                    : 1.0e-8f;
+            if (thresh < peaks[0].power * minimum_ratio)
+                thresh = peaks[0].power * minimum_ratio;
+        }
 
         for (h = 1U;
              h <= SPECTRUM_MAX_HARMONIC_ORDER &&
@@ -581,9 +593,17 @@ static uint8_t SpectrumAnalyzer_SelectHarmonics(const SpectrumPeak *peaks,
      * ratio.  Use a 0.8% floor so a component nominally at the 1% boundary
      * is not lost to windowing and floating-point estimation error.
      */
-    if (threshold < peaks[0].power * SPECTRUM_FUNDAMENTAL_MIN_POWER_RATIO)
+    if (threshold <
+        peaks[0].power *
+        ((s_OptimizedAlgorithmEnabled != 0U)
+             ? SPECTRUM_FUNDAMENTAL_MIN_POWER_RATIO
+             : 1.0e-8f))
     {
-        threshold = peaks[0].power * SPECTRUM_FUNDAMENTAL_MIN_POWER_RATIO;
+        threshold =
+            peaks[0].power *
+            ((s_OptimizedAlgorithmEnabled != 0U)
+                 ? SPECTRUM_FUNDAMENTAL_MIN_POWER_RATIO
+                 : 1.0e-8f);
     }
 
     for (candidate = 0U; candidate < peak_count; candidate++)

@@ -423,6 +423,8 @@ static int TestProductionCalibration(void)
     };
     const GMeasurementCalibration *calibration =
         GMeasurementCalibration_Get();
+    const GMeasurementCalibration *legacy_calibration =
+        GMeasurementCalibration_GetLegacy();
     SpectrumResult spectrum;
     GMeasurementResult measurement;
     static const double expected_peak_mv[] =
@@ -441,7 +443,12 @@ static int TestProductionCalibration(void)
         (calibration->amplitude_rows == NULL) ||
         (calibration->amplitude_row_count != 52U) ||
         (calibration->harmonic_scale_points == NULL) ||
-        (calibration->harmonic_scale_point_count != 7U))
+        (calibration->harmonic_scale_point_count != 7U) ||
+        (legacy_calibration == NULL) ||
+        (legacy_calibration->phase_point_count != 50U) ||
+        (legacy_calibration->amplitude_row_count != 50U) ||
+        (legacy_calibration->harmonic_scale_points != NULL) ||
+        (legacy_calibration->harmonic_scale_point_count != 0U))
     {
         printf("FAIL production calibration point count\n");
         return 0;
@@ -1142,6 +1149,8 @@ static int TestHalfMvQuantization(void)
     static const unsigned int harmonics[] = {1U, 2U, 4U};
     static const double phases[] = {0.17, 1.73, -0.52};
     GMeasurementResult measurement;
+    GMeasurementResult legacy_measurement;
+    double legacy_rms;
     double expected_rms;
     double expected_upp;
 
@@ -1160,8 +1169,11 @@ static int TestHalfMvQuantization(void)
     measurement.urms_mv = (float)sqrt((50.24 * 50.24 +
                                        37.26 * 37.26 +
                                        41.76 * 41.76) / 2.0);
+    legacy_measurement = measurement;
+    legacy_rms = measurement.urms_mv;
 
     GMeasurement_QuantizeHalfMv(&measurement);
+    GMeasurement_QuantizeHalfMvLegacy(&legacy_measurement);
 
     expected_upp = ReconstructComponentUpp(expected_amplitudes,
                                            harmonics,
@@ -1174,7 +1186,9 @@ static int TestHalfMvQuantization(void)
         !NearlyEqual(measurement.components[1].amplitude_mv, 37.26, 1e-5) ||
         !NearlyEqual(measurement.components[2].amplitude_mv, 41.76, 1e-5) ||
         !NearlyEqual(measurement.urms_mv, expected_rms, 0.001) ||
-        !NearlyEqual(measurement.upp_mv, expected_upp, 0.001))
+        !NearlyEqual(measurement.upp_mv, expected_upp, 0.001) ||
+        !NearlyEqual(legacy_measurement.urms_mv, legacy_rms, 0.001) ||
+        !NearlyEqual(legacy_measurement.upp_mv, expected_upp, 0.001))
     {
         printf("FAIL half-mV quantization h=%.3f/%.3f/%.3f rms=%.6f upp=%.6f expected=%.6f\n",
                (double)measurement.components[0].amplitude_mv,

@@ -53,6 +53,9 @@ typedef struct
  */
 uint8_t SpectrumAnalyzer_Run(const int16_t *samples, SpectrumResult *result);
 
+/* enabled=1使用当前基波门限，enabled=0恢复2958bf3随机数版门限。 */
+void SpectrumAnalyzer_SetOptimizedAlgorithm(uint8_t enabled);
+
 /*
  * 将最近一次FFT的10~500kHz频谱按最大值池化为指定点数，并以60dB动态范围
  * 映射到0~254，供淘晶驰波形控件显示。成功返回1。

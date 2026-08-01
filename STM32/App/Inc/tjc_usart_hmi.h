@@ -17,7 +17,7 @@ extern "C" {
 #define TJC_BUTTON_START          0x01U
 #define TJC_BUTTON_TOGGLE_CYCLES  0x02U
 #define TJC_BUTTON_FREQUENCY      0x03U
-#define TJC_BUTTON_RANGE_TOGGLE   0x04U
+#define TJC_BUTTON_FUNCTION_TOGGLE 0x04U
 
 /* UART4中断接收队列和ASCII指令格式化缓冲区大小。 */
 #define RINGBUFFER_LEN           500U
@@ -31,7 +31,7 @@ typedef enum
     TJC_HMI_EVENT_TOGGLE_CYCLES,     /**< b1：在1/3周期之间切换。 */
     TJC_HMI_EVENT_SET_CYCLES,        /**< ASCII 1/3：直接设置周期。 */
     TJC_HMI_EVENT_FREQUENCY_MEASUREMENT, /**< b2：频域测量，更新t3/t4/t5/s1/t6。 */
-    TJC_HMI_EVENT_TOGGLE_RANGE       /**< b3：开关0.5mV幅值量化。 */
+    TJC_HMI_EVENT_TOGGLE_ALGORITHM   /**< b3：切换随机数版/当前优化版。 */
 } TjcHmiEvent;
 
 /* 公共格式化缓冲区，为兼容原淘晶驰例程保留。 */
@@ -40,7 +40,7 @@ extern char str1[TJC_TEXT_BUFFER_LENGTH];
 /*
  * 初始化淘晶驰专用串口和按键帧解析状态。
  * 初始化后会延时设置b0为“时域测量”、b1为“切换周期”、
- * b2为“频域测量”、b3为“量程切换”。
+ * b2为“频域测量”、b3为“功能切换”。
  */
 void TjcHmi_Init(void);
 
@@ -56,7 +56,7 @@ void UART4_IRQHandler(void);
  *   55 01 00 00 FF FF FF -> 时域测量
  *   55 02 00 00 FF FF FF -> 1/3周期切换
  *   55 03 00 00 FF FF FF -> 频域测量
- *   55 04 00 00 FF FF FF -> 0.5mV幅值量化开关
+ *   55 04 00 00 FF FF FF -> 随机数版/当前优化版切换
  * 同时保留ASCII字符'1'和'3'直接选择周期的无屏调试兼容。
  * 有事件返回1，无事件返回0。
  */
@@ -66,6 +66,9 @@ uint8_t TjcHmi_ReadEvent(TjcHmiEvent *event, uint8_t *cycles);
  * 设置量化开关并立即刷新t6前缀：开启显示“1状态:”，关闭显示“0状态:”。
  */
 void TjcHmi_SetQuantizationEnabled(uint8_t enabled);
+
+/* 设置状态栏显示的算法版本；enabled=1为当前优化版。 */
+void TjcHmi_SetAlgorithmOptimized(uint8_t enabled);
 
 /* t6中文状态显示：busy=1显示“状态:测量中”，busy=0显示“状态:就绪”。 */
 void TjcHmi_SetComputeBusy(uint8_t busy);

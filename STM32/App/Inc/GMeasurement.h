@@ -133,6 +133,9 @@ uint8_t GMeasurement_Convert(const SpectrumResult *spectrum,
  */
 void GMeasurement_QuantizeHalfMv(GMeasurementResult *measurement);
 
+/* 2958bf3版本行为：量化分量后只重建Vpp，Vrms保持量化前数值。 */
+void GMeasurement_QuantizeHalfMvLegacy(GMeasurementResult *measurement);
+
 /*
  * 从 5 MSPS 波形帧中按基波相位对齐，生成固定 256 点的 1 周期或 3 周期
  * 屏幕无关波形数据。cycles 只接受 1 或 3。
