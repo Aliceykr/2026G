@@ -68,8 +68,7 @@ static const GMeasurementCalibration s_Calibration =
               sizeof(s_PhaseCalibrationPoints[0])),
     s_AmplitudeCalibrationRows,
     (uint8_t)(sizeof(s_AmplitudeCalibrationRows) /
-              sizeof(s_AmplitudeCalibrationRows[0])),
-    1U
+              sizeof(s_AmplitudeCalibrationRows[0]))
 };
 
 const GMeasurementCalibration *GMeasurementCalibration_Get(void)

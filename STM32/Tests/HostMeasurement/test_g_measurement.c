@@ -126,7 +126,6 @@ static int TestMeasurementConversion(void)
         NULL,
         0U,
         NULL,
-        0U,
         0U
     };
     SpectrumResult spectrum;
@@ -208,7 +207,6 @@ static int TestMeasurementConversion(void)
             NULL,
             0U,
             NULL,
-            0U,
             0U
         };
 
@@ -238,7 +236,7 @@ static int TestMissingCalibration(void)
     SpectrumResult spectrum;
     GMeasurementResult measurement;
     GMeasurementCalibration calibration =
-        { NULL, 0U, NULL, 0U, NULL, 0U, 0U };
+        { NULL, 0U, NULL, 0U, NULL, 0U };
 
     memset(&spectrum, 0, sizeof(spectrum));
     memset(&measurement, 0xA5, sizeof(measurement));
@@ -483,8 +481,7 @@ static int TestTwoDimensionalAmplitudeCalibration(void)
         NULL,
         0U,
         amplitude_rows,
-        2U,
-        0U
+        2U
     };
     SpectrumResult spectrum;
     GMeasurementResult measurement;
@@ -536,7 +533,6 @@ static int TestGeneralPhaseCalibration(void)
         phase_points,
         3U,
         NULL,
-        0U,
         0U
     };
     static const double amplitudes[] = { 50.0, 25.0, 15.0 };
@@ -603,7 +599,6 @@ static int TestRefinedVppExtrema(void)
         NULL,
         0U,
         NULL,
-        0U,
         0U
     };
     static const double amplitudes[] = { 5.0, 100.0 };
@@ -893,7 +888,6 @@ static int TestEndToEndMvLimits(void)
         NULL,
         0U,
         NULL,
-        0U,
         0U
     };
     SpectrumResult spectrum;
@@ -1015,82 +1009,6 @@ static int TestHalfMvQuantization(void)
     return 1;
 }
 
-static int TestRigolHarmonicPhaseReference(void)
-{
-    static const GMeasurementCalibrationPoint calibration_points[] =
-    {
-        {  10000.0f, 0.0100f },
-        { 500000.0f, 0.0100f }
-    };
-    static const GMeasurementCalibration calibration =
-    {
-        calibration_points,
-        2U,
-        NULL,
-        0U,
-        NULL,
-        0U,
-        1U
-    };
-    SpectrumResult spectrum;
-    GMeasurementResult measurement;
-
-    memset(&spectrum, 0, sizeof(spectrum));
-    spectrum.valid = 1U;
-    spectrum.fundamental_hz = 100000.0f;
-    spectrum.component_count = 3U;
-    spectrum.components[0].harmonic = 1U;
-    spectrum.components[0].frequency_hz = 100000.0f;
-    spectrum.components[0].amplitude_codes = 12000.0f;
-    spectrum.components[0].phase_rad = 0.3f;
-    spectrum.components[1].harmonic = 3U;
-    spectrum.components[1].frequency_hz = 300000.0f;
-    spectrum.components[1].amplitude_codes = 6000.0f;
-    spectrum.components[1].phase_rad =
-        0.9f + (float)TEST_PI;
-    spectrum.components[2].harmonic = 5U;
-    spectrum.components[2].frequency_hz = 500000.0f;
-    spectrum.components[2].amplitude_codes = 4000.0f;
-    spectrum.components[2].phase_rad =
-        1.5f + (float)(2.0 * TEST_PI);
-
-    if ((GMeasurement_Convert(&spectrum, &calibration, &measurement) == 0U) ||
-        (measurement.harmonic_reference_valid == 0U) ||
-        (measurement.harmonic_normalization_applied != 0U))
-    {
-        puts("FAIL RIGOL harmonic zero-phase reference capture");
-        return 0;
-    }
-
-    spectrum.components[0].amplitude_codes = 9360.0f;
-    spectrum.components[0].phase_rad = 0.3f;
-    spectrum.components[1].amplitude_codes = 4770.0f;
-    spectrum.components[1].phase_rad =
-        0.9f + (float)TEST_PI + (float)(0.5 * TEST_PI);
-    spectrum.components[2].amplitude_codes = 3228.0f;
-    spectrum.components[2].phase_rad =
-        1.5f + (float)(2.0 * TEST_PI) + (float)TEST_PI;
-
-    if ((GMeasurement_Convert(&spectrum, &calibration, &measurement) == 0U) ||
-        (measurement.harmonic_normalization_applied == 0U) ||
-        !NearlyEqual(measurement.components[0].amplitude_mv, 60.0, 0.001) ||
-        !NearlyEqual(measurement.components[1].amplitude_mv, 30.0, 0.001) ||
-        !NearlyEqual(measurement.components[2].amplitude_mv, 20.0, 0.001) ||
-        !NearlyEqual(measurement.harmonic_normalization_gain, 0.795, 0.02))
-    {
-        printf("FAIL RIGOL harmonic phase reference h=%.3f/%.3f/%.3f gain=%.5f applied=%u\n",
-               (double)measurement.components[0].amplitude_mv,
-               (double)measurement.components[1].amplitude_mv,
-               (double)measurement.components[2].amplitude_mv,
-               (double)measurement.harmonic_normalization_gain,
-               (unsigned int)measurement.harmonic_normalization_applied);
-        return 0;
-    }
-
-    puts("PASS RIGOL H2-H8 generic zero-phase reference compensation");
-    return 1;
-}
-
 int main(void)
 {
     int passed = 1;
@@ -1105,6 +1023,5 @@ int main(void)
     passed &= TestHighFrequencyWaveformSmoothness();
     passed &= TestEndToEndMvLimits();
     passed &= TestHalfMvQuantization();
-    passed &= TestRigolHarmonicPhaseReference();
     return passed ? 0 : 1;
 }

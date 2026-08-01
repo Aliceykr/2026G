@@ -1252,7 +1252,6 @@ static void GSignalFlow_SendCalibrationTelemetry(void)
     char f0_text[24];
     char upp_text[24];
     char urms_text[24];
-    char normalization_gain_text[24];
     float reference_phase_deg = 0.0f;
     uint8_t reference_valid = 0U;
     uint8_t component;
@@ -1280,20 +1279,14 @@ static void GSignalFlow_SendCalibrationTelemetry(void)
     GSignalFlow_FormatFixed3(s_Measurement.urms_mv,
                              urms_text,
                              sizeof(urms_text));
-    GSignalFlow_FormatFixed3(s_Measurement.harmonic_normalization_gain,
-                             normalization_gain_text,
-                             sizeof(normalization_gain_text));
     (void)snprintf(buffer,
                    sizeof(buffer),
-                   "G_CAL,seq=%lu,f0=%sHz,n=%u,upp=%smV,urms=%smV,href=%u,hnorm=%u,hgain=%s,t_ms=%lu,raw_min=%d,raw_max=%d,raw_pp=%ld\r\n",
+                   "G_CAL,seq=%lu,f0=%sHz,n=%u,upp=%smV,urms=%smV,t_ms=%lu,raw_min=%d,raw_max=%d,raw_pp=%ld\r\n",
                    (unsigned long)s_ActiveSequence,
                    f0_text,
                    (unsigned int)s_Measurement.component_count,
                    upp_text,
                    urms_text,
-                   (unsigned int)s_Measurement.harmonic_reference_valid,
-                   (unsigned int)s_Measurement.harmonic_normalization_applied,
-                   normalization_gain_text,
                    (unsigned long)s_AnalysisElapsedMs,
                    (int)raw_min,
                    (int)raw_max,

@@ -5,29 +5,9 @@
 #include <string.h>
 
 #define G_MEASUREMENT_TWO_PI              6.28318530717958647692f
-#define G_MEASUREMENT_HALF_PI             1.57079632679489661923f
 #define G_MEASUREMENT_RECONSTRUCT_POINTS  2048U
 #define G_MEASUREMENT_EXTREMUM_ITERATIONS  18U
 #define G_MEASUREMENT_GOLDEN_RATIO         0.61803398874989484820f
-#define G_MEASUREMENT_REFERENCE_PHASE_RAD  0.13962634015954636f
-#define G_MEASUREMENT_REFERENCE_RATIO_TOL  0.080f
-#define G_MEASUREMENT_REFERENCE_GAIN_MIN   0.500f
-#define G_MEASUREMENT_REFERENCE_GAIN_MAX   1.500f
-#define G_MEASUREMENT_REFERENCE_MISMATCHES 3U
-#define G_MEASUREMENT_REFERENCE_SLOTS      21U
-
-typedef struct
-{
-    uint8_t valid;
-    uint8_t component_count;
-    uint8_t mismatch_count;
-    uint8_t harmonics[SPECTRUM_MAX_COMPONENTS];
-    float fundamental_hz;
-    float amplitudes_mv[SPECTRUM_MAX_COMPONENTS];
-} GMeasurementHarmonicReference;
-
-static GMeasurementHarmonicReference
-    s_HarmonicReferences[G_MEASUREMENT_REFERENCE_SLOTS];
 
 static uint8_t GMeasurement_ValidateCalibration(
     const GMeasurementCalibration *calibration);
@@ -53,15 +33,6 @@ static float GMeasurement_RefineExtremum(
     float half_width,
     uint8_t find_maximum);
 static void GMeasurement_UpdateUpp(GMeasurementResult *measurement);
-static void GMeasurement_ApplyRigolHarmonicReference(
-    const GMeasurementCalibration *calibration,
-    GMeasurementResult *measurement);
-static GMeasurementHarmonicReference *
-    GMeasurement_FindHarmonicReference(
-    const GMeasurementResult *measurement);
-static GMeasurementHarmonicReference *
-    GMeasurement_AllocateHarmonicReference(void);
-static float GMeasurement_MedianGain(float *values, uint8_t count);
 static float GMeasurement_WrapRadians(float phase_rad);
 static float GMeasurement_CubicInterpolate(const int16_t *samples,
                                            float position);
@@ -120,16 +91,7 @@ uint8_t GMeasurement_Convert(const SpectrumResult *spectrum,
             (GMeasurement_GetPhaseErrorRad(calibration,
                                            input->frequency_hz) -
              (float)input->harmonic * fundamental_phase_error_rad));
-    }
-
-    GMeasurement_ApplyRigolHarmonicReference(calibration, measurement);
-
-    for (component = 0U;
-         component < measurement->component_count;
-         component++)
-    {
-        sum_square += measurement->components[component].amplitude_mv *
-                      measurement->components[component].amplitude_mv;
+        sum_square += output->amplitude_mv * output->amplitude_mv;
     }
 
     measurement->urms_mv = sqrtf(0.5f * sum_square);
@@ -148,249 +110,6 @@ uint8_t GMeasurement_Convert(const SpectrumResult *spectrum,
 
     measurement->valid = 1U;
     return 1U;
-}
-
-static void GMeasurement_ApplyRigolHarmonicReference(
-    const GMeasurementCalibration *calibration,
-    GMeasurementResult *measurement)
-{
-    float fundamental_phase = 0.0f;
-    float fundamental_amplitude = 0.0f;
-    float gains[SPECTRUM_MAX_COMPONENTS];
-    float median_gain;
-    GMeasurementHarmonicReference *reference;
-    uint8_t fundamental_found = 0U;
-    uint8_t zero_phase = 1U;
-    uint8_t ratios_match = 1U;
-    uint8_t component;
-
-    reference = GMeasurement_FindHarmonicReference(measurement);
-    measurement->harmonic_reference_valid =
-        (reference != NULL) ? 1U : 0U;
-    measurement->harmonic_normalization_applied = 0U;
-    measurement->harmonic_normalization_gain = 1.0f;
-
-    if ((calibration->enable_rigol_harmonic_reference == 0U) ||
-        (measurement->component_count < 2U))
-    {
-        return;
-    }
-
-    for (component = 0U;
-         component < measurement->component_count;
-         component++)
-    {
-        const GMeasurementComponent *item =
-            &measurement->components[component];
-
-        if (item->harmonic == 1U)
-        {
-            fundamental_phase = item->phase_rad;
-            fundamental_amplitude = item->amplitude_mv;
-            fundamental_found = 1U;
-            break;
-        }
-    }
-
-    if ((fundamental_found == 0U) || (fundamental_amplitude <= 0.0f))
-    {
-        return;
-    }
-
-    for (component = 0U;
-         component < measurement->component_count;
-         component++)
-    {
-        const GMeasurementComponent *item =
-            &measurement->components[component];
-
-        if (item->harmonic == 1U)
-        {
-            continue;
-        }
-        if ((item->harmonic < 2U) || (item->harmonic > 8U) ||
-            (fabsf(GMeasurement_WrapRadians(
-                item->phase_rad -
-                (float)item->harmonic * fundamental_phase +
-                (1.0f - (float)item->harmonic) *
-                    G_MEASUREMENT_HALF_PI)) >
-             G_MEASUREMENT_REFERENCE_PHASE_RAD))
-        {
-            zero_phase = 0U;
-        }
-    }
-
-    if (zero_phase != 0U)
-    {
-        if (reference == NULL)
-        {
-            reference = GMeasurement_AllocateHarmonicReference();
-        }
-        if (reference == NULL)
-        {
-            return;
-        }
-        memset(reference, 0, sizeof(*reference));
-        reference->valid = 1U;
-        reference->component_count = measurement->component_count;
-        reference->fundamental_hz = measurement->fundamental_hz;
-        for (component = 0U;
-             component < measurement->component_count;
-             component++)
-        {
-            reference->harmonics[component] =
-                measurement->components[component].harmonic;
-            reference->amplitudes_mv[component] =
-                measurement->components[component].amplitude_mv;
-        }
-        measurement->harmonic_reference_valid = 1U;
-        return;
-    }
-
-    if (reference == NULL)
-    {
-        return;
-    }
-
-    for (component = 0U;
-         component < measurement->component_count;
-         component++)
-    {
-        float reference_amplitude = reference->amplitudes_mv[component];
-        float current = measurement->components[component].amplitude_mv;
-
-        if ((reference_amplitude <= 0.0f) || (current <= 0.0f))
-        {
-            return;
-        }
-        gains[component] = current / reference_amplitude;
-    }
-
-    median_gain = GMeasurement_MedianGain(
-        gains, measurement->component_count);
-    if ((median_gain < G_MEASUREMENT_REFERENCE_GAIN_MIN) ||
-        (median_gain > G_MEASUREMENT_REFERENCE_GAIN_MAX))
-    {
-        return;
-    }
-
-    for (component = 0U;
-         component < measurement->component_count;
-         component++)
-    {
-        if (fabsf(gains[component] - median_gain) >
-            G_MEASUREMENT_REFERENCE_RATIO_TOL * median_gain)
-        {
-            ratios_match = 0U;
-        }
-    }
-
-    if (ratios_match == 0U)
-    {
-        if (reference->mismatch_count < 255U)
-        {
-            reference->mismatch_count++;
-        }
-        if (reference->mismatch_count >=
-            G_MEASUREMENT_REFERENCE_MISMATCHES)
-        {
-            memset(reference, 0, sizeof(*reference));
-            measurement->harmonic_reference_valid = 0U;
-        }
-        return;
-    }
-
-    reference->mismatch_count = 0U;
-    for (component = 0U;
-         component < measurement->component_count;
-         component++)
-    {
-        measurement->components[component].amplitude_mv =
-            reference->amplitudes_mv[component];
-    }
-    measurement->harmonic_reference_valid = 1U;
-    measurement->harmonic_normalization_applied = 1U;
-    measurement->harmonic_normalization_gain = median_gain;
-}
-
-static GMeasurementHarmonicReference *
-    GMeasurement_FindHarmonicReference(
-    const GMeasurementResult *measurement)
-{
-    GMeasurementHarmonicReference *reference;
-    uint8_t slot;
-    uint8_t component;
-
-    for (slot = 0U; slot < G_MEASUREMENT_REFERENCE_SLOTS; slot++)
-    {
-        reference = &s_HarmonicReferences[slot];
-        if ((reference->valid == 0U) ||
-            (measurement->component_count != reference->component_count))
-        {
-            continue;
-        }
-
-        for (component = 0U;
-             component < measurement->component_count;
-             component++)
-        {
-            if (measurement->components[component].harmonic !=
-                reference->harmonics[component])
-            {
-                break;
-            }
-        }
-        if (component == measurement->component_count)
-        {
-            return reference;
-        }
-    }
-    return NULL;
-}
-
-static GMeasurementHarmonicReference *
-    GMeasurement_AllocateHarmonicReference(void)
-{
-    uint8_t slot;
-
-    for (slot = 0U; slot < G_MEASUREMENT_REFERENCE_SLOTS; slot++)
-    {
-        if (s_HarmonicReferences[slot].valid == 0U)
-        {
-            return &s_HarmonicReferences[slot];
-        }
-    }
-    return NULL;
-}
-
-static float GMeasurement_MedianGain(float *values, uint8_t count)
-{
-    float sorted[SPECTRUM_MAX_COMPONENTS];
-    uint8_t left;
-    uint8_t right;
-
-    for (left = 0U; left < count; left++)
-    {
-        sorted[left] = values[left];
-    }
-    for (left = 0U; left < count; left++)
-    {
-        for (right = (uint8_t)(left + 1U); right < count; right++)
-        {
-            if (sorted[right] < sorted[left])
-            {
-                float temporary = sorted[left];
-                sorted[left] = sorted[right];
-                sorted[right] = temporary;
-            }
-        }
-    }
-
-    if ((count & 1U) != 0U)
-    {
-        return sorted[count / 2U];
-    }
-    return 0.5f * (sorted[count / 2U - 1U] + sorted[count / 2U]);
 }
 
 uint8_t GMeasurement_BuildWaveform(const int16_t *samples,

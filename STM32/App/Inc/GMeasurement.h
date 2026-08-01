@@ -69,12 +69,6 @@ typedef struct
     uint8_t phase_point_count;
     const GMeasurementAmplitudeCalibrationRow *amplitude_rows;
     uint8_t amplitude_row_count;
-    /*
-     * 绑定RIGOL DG1022Z谐波模式的快速相位补偿。
-     * 先在各谐波相对相位均为0度时自动建立幅值基准；随后同一阶数、
-     * 同一幅值比例下改变相位时，消除信号源内部归一化造成的缩放。
-     */
-    uint8_t enable_rigol_harmonic_reference;
 } GMeasurementCalibration;
 
 typedef struct
@@ -90,12 +84,9 @@ typedef struct
     uint8_t valid;
     uint8_t component_count;
     uint8_t spur_valid;
-    uint8_t harmonic_reference_valid;
-    uint8_t harmonic_normalization_applied;
     float fundamental_hz;
     float upp_mv;
     float urms_mv;
-    float harmonic_normalization_gain;
     float spur_frequency_hz;
     float spur_amplitude_mv;
     GMeasurementComponent components[SPECTRUM_MAX_COMPONENTS];
