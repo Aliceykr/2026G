@@ -263,6 +263,136 @@ static int TestMissingCalibration(void)
     return 1;
 }
 
+static int TestFundamentalWeightedHarmonicScale(void)
+{
+    static const GMeasurementCalibrationPoint amplitude_point =
+        { 10000.0f, 0.01f };
+    static const GMeasurementHarmonicScalePoint harmonic_scale_point =
+        { 200000.0f, 1.02f };
+    static const GMeasurementCalibration calibration =
+    {
+        &amplitude_point,
+        1U,
+        NULL,
+        0U,
+        NULL,
+        0U,
+        &harmonic_scale_point,
+        1U
+    };
+    static const float fundamentals[] =
+        { 100000.0f, 130000.0f, 160000.0f };
+    static const double expected_h2[] =
+        { 49.0196078431, 49.5049504950, 50.0 };
+    SpectrumResult spectrum;
+    GMeasurementResult measurement;
+    unsigned int index;
+
+    for (index = 0U; index < 3U; index++)
+    {
+        memset(&spectrum, 0, sizeof(spectrum));
+        spectrum.valid = 1U;
+        spectrum.fundamental_hz = fundamentals[index];
+        spectrum.component_count = 2U;
+        spectrum.components[0].harmonic = 1U;
+        spectrum.components[0].frequency_hz = fundamentals[index];
+        spectrum.components[0].amplitude_codes = 10000.0f;
+        spectrum.components[1].harmonic = 2U;
+        spectrum.components[1].frequency_hz = 2.0f * fundamentals[index];
+        spectrum.components[1].amplitude_codes = 10000.0f;
+
+        if ((GMeasurement_Convert(&spectrum,
+                                  &calibration,
+                                  &measurement) == 0U) ||
+            !NearlyEqual(measurement.components[0].amplitude_mv,
+                         50.0,
+                         1e-5) ||
+            !NearlyEqual(measurement.components[1].amplitude_mv,
+                         expected_h2[index],
+                         1e-5))
+        {
+            printf("FAIL fundamental-weighted harmonic scale f0=%.0f h1=%.6f h2=%.6f expected=%.6f\n",
+                   (double)fundamentals[index],
+                   (double)measurement.components[0].amplitude_mv,
+                   (double)measurement.components[1].amplitude_mv,
+                   expected_h2[index]);
+            return 0;
+        }
+    }
+
+    puts("PASS fundamental-weighted harmonic scale 100k/130k/160k");
+    return 1;
+}
+
+static int TestLowAmplitudeHighFrequencyHarmonicScale(void)
+{
+    static const GMeasurementCalibrationPoint amplitude_point =
+        { 10000.0f, 0.01f };
+    static const GMeasurementHarmonicScalePoint harmonic_scale_point =
+        { 100000.0f, 1.0f };
+    static const GMeasurementCalibration calibration =
+    {
+        &amplitude_point,
+        1U,
+        NULL,
+        0U,
+        NULL,
+        0U,
+        &harmonic_scale_point,
+        1U
+    };
+    SpectrumResult spectrum;
+    GMeasurementResult measurement;
+    double expected_low_amplitude = 20.0 / 1.0112;
+
+    memset(&spectrum, 0, sizeof(spectrum));
+    spectrum.valid = 1U;
+    spectrum.fundamental_hz = 50000.0f;
+    spectrum.component_count = 3U;
+    spectrum.components[0].harmonic = 1U;
+    spectrum.components[0].frequency_hz = 50000.0f;
+    spectrum.components[0].amplitude_codes = 1000.0f;
+    spectrum.components[1].harmonic = 2U;
+    spectrum.components[1].frequency_hz = 100000.0f;
+    spectrum.components[1].amplitude_codes = 4000.0f;
+    spectrum.components[2].harmonic = 8U;
+    spectrum.components[2].frequency_hz = 400000.0f;
+    spectrum.components[2].amplitude_codes = 4000.0f;
+
+    if ((GMeasurement_Convert(&spectrum,
+                              &calibration,
+                              &measurement) == 0U) ||
+        !NearlyEqual(measurement.components[1].amplitude_mv,
+                     20.0,
+                     1e-5) ||
+        !NearlyEqual(measurement.components[2].amplitude_mv,
+                     expected_low_amplitude,
+                     1e-5))
+    {
+        printf("FAIL low-amplitude HF scale h2=%.6f h8=%.6f expected=%.6f\n",
+               (double)measurement.components[1].amplitude_mv,
+               (double)measurement.components[2].amplitude_mv,
+               expected_low_amplitude);
+        return 0;
+    }
+
+    spectrum.components[2].amplitude_codes = 5000.0f;
+    if ((GMeasurement_Convert(&spectrum,
+                              &calibration,
+                              &measurement) == 0U) ||
+        !NearlyEqual(measurement.components[2].amplitude_mv,
+                     25.0,
+                     1e-5))
+    {
+        printf("FAIL high-amplitude HF scale h8=%.6f\n",
+               (double)measurement.components[2].amplitude_mv);
+        return 0;
+    }
+
+    puts("PASS low-amplitude high-frequency harmonic scale");
+    return 1;
+}
+
 static int TestProductionCalibration(void)
 {
     static const float expected_frequencies[] =
@@ -1066,6 +1196,8 @@ int main(void)
 
     passed &= TestMeasurementConversion();
     passed &= TestMissingCalibration();
+    passed &= TestFundamentalWeightedHarmonicScale();
+    passed &= TestLowAmplitudeHighFrequencyHarmonicScale();
     passed &= TestProductionCalibration();
     passed &= TestTwoDimensionalAmplitudeCalibration();
     passed &= TestGeneralPhaseCalibration();

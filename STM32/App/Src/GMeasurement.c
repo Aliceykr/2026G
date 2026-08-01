@@ -8,6 +8,10 @@
 #define G_MEASUREMENT_RECONSTRUCT_POINTS  2048U
 #define G_MEASUREMENT_EXTREMUM_ITERATIONS  18U
 #define G_MEASUREMENT_GOLDEN_RATIO         0.61803398874989484820f
+#define G_MEASUREMENT_HARMONIC_SCALE_FULL_F0_HZ 100000.0f
+#define G_MEASUREMENT_HARMONIC_SCALE_OFF_F0_HZ  160000.0f
+#define G_MEASUREMENT_HARMONIC_LOW_AMP_START_HZ 100000.0f
+#define G_MEASUREMENT_HARMONIC_LOW_AMP_FULL_HZ  200000.0f
 
 static uint8_t GMeasurement_ValidateCalibration(
     const GMeasurementCalibration *calibration);
@@ -20,7 +24,11 @@ static float GMeasurement_GetAmplitudeMv(
     float amplitude_codes);
 static float GMeasurement_GetHarmonicMeasuredScale(
     const GMeasurementCalibration *calibration,
+    float fundamental_hz,
     float frequency_hz);
+static float GMeasurement_GetLowAmplitudeHarmonicScale(
+    float frequency_hz,
+    float amplitude_mv);
 static float GMeasurement_ConvertAmplitudeRow(
     const GMeasurementAmplitudeCalibrationRow *row,
     float amplitude_codes);
@@ -90,7 +98,13 @@ uint8_t GMeasurement_Convert(const SpectrumResult *spectrum,
         {
             output->amplitude_mv /=
                 GMeasurement_GetHarmonicMeasuredScale(
-                    calibration, input->frequency_hz);
+                    calibration,
+                    spectrum->fundamental_hz,
+                    input->frequency_hz);
+            output->amplitude_mv /=
+                GMeasurement_GetLowAmplitudeHarmonicScale(
+                    input->frequency_hz,
+                    output->amplitude_mv);
         }
         /*
          * 单次采集带有任意起始时刻，对第n次谐波表现为n倍公共相位。
@@ -563,15 +577,20 @@ static float GMeasurement_GetAmplitudeMv(
 
 static float GMeasurement_GetHarmonicMeasuredScale(
     const GMeasurementCalibration *calibration,
+    float fundamental_hz,
     float frequency_hz)
 {
+    float measured_scale;
+    float correction_weight;
     uint8_t index;
 
     if ((calibration->harmonic_scale_point_count == 1U) ||
         (frequency_hz <=
          calibration->harmonic_scale_points[0].frequency_hz))
     {
-        return calibration->harmonic_scale_points[0].measured_scale;
+        measured_scale =
+            calibration->harmonic_scale_points[0].measured_scale;
+        goto apply_fundamental_weight;
     }
 
     for (index = 1U;
@@ -589,14 +608,103 @@ static float GMeasurement_GetHarmonicMeasuredScale(
                 (frequency_hz - left->frequency_hz) /
                 (right->frequency_hz - left->frequency_hz);
 
-            return left->measured_scale +
-                   ratio * (right->measured_scale -
-                            left->measured_scale);
+            measured_scale =
+                left->measured_scale +
+                ratio * (right->measured_scale -
+                         left->measured_scale);
+            goto apply_fundamental_weight;
         }
     }
 
-    return calibration->harmonic_scale_points[
+    measured_scale = calibration->harmonic_scale_points[
         calibration->harmonic_scale_point_count - 1U].measured_scale;
+
+apply_fundamental_weight:
+    /*
+     * 当前谐波倍率表来自DG1022Z在50 kHz基频下的谐波模式。实测表明，
+     * 基频升至160 kHz时信号源不再出现该约2%的公共倍率；若仍按谐波
+     * 绝对频率直接套表，会令320/480 kHz分量低估约1.2 mV。
+     *
+     * 快速版在100~160 kHz基频间连续退去这项“信号源模式”修正。
+     * 频率响应和幅值二维标定仍照常应用，因此不会影响单正弦或H1。
+     */
+    if (fundamental_hz <= G_MEASUREMENT_HARMONIC_SCALE_FULL_F0_HZ)
+    {
+        correction_weight = 1.0f;
+    }
+    else if (fundamental_hz >= G_MEASUREMENT_HARMONIC_SCALE_OFF_F0_HZ)
+    {
+        correction_weight = 0.0f;
+    }
+    else
+    {
+        correction_weight =
+            (G_MEASUREMENT_HARMONIC_SCALE_OFF_F0_HZ - fundamental_hz) /
+            (G_MEASUREMENT_HARMONIC_SCALE_OFF_F0_HZ -
+             G_MEASUREMENT_HARMONIC_SCALE_FULL_F0_HZ);
+    }
+
+    return 1.0f + correction_weight * (measured_scale - 1.0f);
+}
+
+static float GMeasurement_GetLowAmplitudeHarmonicScale(
+    float frequency_hz,
+    float amplitude_mv)
+{
+    float amplitude_scale;
+    float frequency_weight;
+
+    /*
+     * DG1022Z谐波模式补测：200~400 kHz分量在20/30/40 mVpp时
+     * 分别平均偏高约1.44%/1.47%/1.12%，到50 mVpp恢复正常。
+     * amplitude_mv为峰值，因此以下10/15/20/25 mV节点分别对应
+     * 信号源显示的20/30/40/50 mVpp。采用分段线性曲线，避免换档点
+     * 附近出现新的幅值跳变；50 mVpp以上完全不修正。
+     */
+    if (amplitude_mv >= 25.0f)
+    {
+        amplitude_scale = 1.0f;
+    }
+    else if (amplitude_mv >= 20.0f)
+    {
+        amplitude_scale =
+            1.0112f +
+            (amplitude_mv - 20.0f) * (1.0f - 1.0112f) / 5.0f;
+    }
+    else if (amplitude_mv >= 15.0f)
+    {
+        amplitude_scale =
+            1.0147f +
+            (amplitude_mv - 15.0f) * (1.0112f - 1.0147f) / 5.0f;
+    }
+    else if (amplitude_mv >= 10.0f)
+    {
+        amplitude_scale =
+            1.0144f +
+            (amplitude_mv - 10.0f) * (1.0147f - 1.0144f) / 5.0f;
+    }
+    else
+    {
+        amplitude_scale = 1.0144f;
+    }
+
+    if (frequency_hz <= G_MEASUREMENT_HARMONIC_LOW_AMP_START_HZ)
+    {
+        frequency_weight = 0.0f;
+    }
+    else if (frequency_hz >= G_MEASUREMENT_HARMONIC_LOW_AMP_FULL_HZ)
+    {
+        frequency_weight = 1.0f;
+    }
+    else
+    {
+        frequency_weight =
+            (frequency_hz - G_MEASUREMENT_HARMONIC_LOW_AMP_START_HZ) /
+            (G_MEASUREMENT_HARMONIC_LOW_AMP_FULL_HZ -
+             G_MEASUREMENT_HARMONIC_LOW_AMP_START_HZ);
+    }
+
+    return 1.0f + frequency_weight * (amplitude_scale - 1.0f);
 }
 
 static float GMeasurement_ConvertAmplitudeRow(
