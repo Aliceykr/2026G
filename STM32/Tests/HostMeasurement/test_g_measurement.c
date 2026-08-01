@@ -126,6 +126,8 @@ static int TestMeasurementConversion(void)
         NULL,
         0U,
         NULL,
+        0U,
+        NULL,
         0U
     };
     SpectrumResult spectrum;
@@ -207,6 +209,8 @@ static int TestMeasurementConversion(void)
             NULL,
             0U,
             NULL,
+            0U,
+            NULL,
             0U
         };
 
@@ -236,7 +240,7 @@ static int TestMissingCalibration(void)
     SpectrumResult spectrum;
     GMeasurementResult measurement;
     GMeasurementCalibration calibration =
-        { NULL, 0U, NULL, 0U, NULL, 0U };
+        { NULL, 0U, NULL, 0U, NULL, 0U, NULL, 0U };
 
     memset(&spectrum, 0, sizeof(spectrum));
     memset(&measurement, 0xA5, sizeof(measurement));
@@ -305,7 +309,9 @@ static int TestProductionCalibration(void)
         (calibration->phase_points == NULL) ||
         (calibration->phase_point_count != 50U) ||
         (calibration->amplitude_rows == NULL) ||
-        (calibration->amplitude_row_count != 52U))
+        (calibration->amplitude_row_count != 52U) ||
+        (calibration->harmonic_scale_points == NULL) ||
+        (calibration->harmonic_scale_point_count != 7U))
     {
         printf("FAIL production calibration point count\n");
         return 0;
@@ -437,7 +443,44 @@ static int TestProductionCalibration(void)
         return 0;
     }
 
-    printf("PASS production 52x9 amplitude (%u nodes) and 50-point phase tables\n",
+    /* H1保持原值，150 kHz的多谐波H3只消除额外1.8352143%倍率。 */
+    memset(&spectrum, 0, sizeof(spectrum));
+    spectrum.valid = 1U;
+    spectrum.fundamental_hz = 50000.0f;
+    spectrum.component_count = 2U;
+    spectrum.components[0].harmonic = 1U;
+    spectrum.components[0].frequency_hz = 50000.0f;
+    spectrum.components[0].amplitude_codes =
+        calibration->amplitude_rows[4].levels[5].amplitude_codes;
+    spectrum.components[1].harmonic = 3U;
+    spectrum.components[1].frequency_hz = 150000.0f;
+    {
+        const GMeasurementAmplitudeCalibrationRow *row =
+            &calibration->amplitude_rows[15];
+        double desired_peak =
+            50.0 * calibration->harmonic_scale_points[1].measured_scale;
+        double ratio = (desired_peak - 50.0) / 25.0;
+
+        spectrum.components[1].amplitude_codes =
+            row->levels[5].amplitude_codes +
+            (float)ratio *
+                (row->levels[6].amplitude_codes -
+                 row->levels[5].amplitude_codes);
+    }
+
+    if ((GMeasurement_Convert(&spectrum,
+                              calibration,
+                              &measurement) == 0U) ||
+        !NearlyEqual(measurement.components[0].amplitude_mv, 50.0, 0.001) ||
+        !NearlyEqual(measurement.components[1].amplitude_mv, 50.0, 0.001))
+    {
+        printf("FAIL production multitone harmonic scale h1=%.6f h3=%.6f\n",
+               (double)measurement.components[0].amplitude_mv,
+               (double)measurement.components[1].amplitude_mv);
+        return 0;
+    }
+
+    printf("PASS production 52x9 amplitude (%u nodes), 50-point phase and 7-point harmonic scale tables\n",
            verified_nodes);
     return 1;
 }
@@ -481,7 +524,9 @@ static int TestTwoDimensionalAmplitudeCalibration(void)
         NULL,
         0U,
         amplitude_rows,
-        2U
+        2U,
+        NULL,
+        0U
     };
     SpectrumResult spectrum;
     GMeasurementResult measurement;
@@ -532,6 +577,8 @@ static int TestGeneralPhaseCalibration(void)
         1U,
         phase_points,
         3U,
+        NULL,
+        0U,
         NULL,
         0U
     };
@@ -596,6 +643,8 @@ static int TestRefinedVppExtrema(void)
     {
         &amplitude_point,
         1U,
+        NULL,
+        0U,
         NULL,
         0U,
         NULL,
@@ -885,6 +934,8 @@ static int TestEndToEndMvLimits(void)
     {
         calibration_points,
         2U,
+        NULL,
+        0U,
         NULL,
         0U,
         NULL,

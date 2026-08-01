@@ -18,6 +18,9 @@ static float GMeasurement_GetAmplitudeMv(
     const GMeasurementCalibration *calibration,
     float frequency_hz,
     float amplitude_codes);
+static float GMeasurement_GetHarmonicMeasuredScale(
+    const GMeasurementCalibration *calibration,
+    float frequency_hz);
 static float GMeasurement_ConvertAmplitudeRow(
     const GMeasurementAmplitudeCalibrationRow *row,
     float amplitude_codes);
@@ -80,6 +83,15 @@ uint8_t GMeasurement_Convert(const SpectrumResult *spectrum,
             GMeasurement_GetAmplitudeMv(calibration,
                                         input->frequency_hz,
                                         input->amplitude_codes);
+        if ((spectrum->component_count > 1U) &&
+            (input->harmonic > 1U) &&
+            (calibration->harmonic_scale_points != NULL) &&
+            (calibration->harmonic_scale_point_count > 0U))
+        {
+            output->amplitude_mv /=
+                GMeasurement_GetHarmonicMeasuredScale(
+                    calibration, input->frequency_hz);
+        }
         /*
          * 单次采集带有任意起始时刻，对第n次谐波表现为n倍公共相位。
          * Vpp不受该线性相位影响，因此只消除测量链的非线性相位响应：
@@ -396,6 +408,34 @@ static uint8_t GMeasurement_ValidateCalibration(
         }
     }
 
+    if (calibration->harmonic_scale_point_count > 0U)
+    {
+        if (calibration->harmonic_scale_points == NULL)
+        {
+            return 0U;
+        }
+
+        for (index = 0U;
+             index < calibration->harmonic_scale_point_count;
+             index++)
+        {
+            const GMeasurementHarmonicScalePoint *point =
+                &calibration->harmonic_scale_points[index];
+
+            if ((point->frequency_hz <= 0.0f) ||
+                (point->measured_scale <= 0.0f))
+            {
+                return 0U;
+            }
+            if ((index > 0U) &&
+                (point->frequency_hz <=
+                 calibration->harmonic_scale_points[index - 1U].frequency_hz))
+            {
+                return 0U;
+            }
+        }
+    }
+
     return 1U;
 }
 
@@ -519,6 +559,44 @@ static float GMeasurement_GetAmplitudeMv(
     return amplitude_codes *
            GMeasurement_GetMvPerCode(calibration, frequency_hz);
 #endif
+}
+
+static float GMeasurement_GetHarmonicMeasuredScale(
+    const GMeasurementCalibration *calibration,
+    float frequency_hz)
+{
+    uint8_t index;
+
+    if ((calibration->harmonic_scale_point_count == 1U) ||
+        (frequency_hz <=
+         calibration->harmonic_scale_points[0].frequency_hz))
+    {
+        return calibration->harmonic_scale_points[0].measured_scale;
+    }
+
+    for (index = 1U;
+         index < calibration->harmonic_scale_point_count;
+         index++)
+    {
+        const GMeasurementHarmonicScalePoint *left =
+            &calibration->harmonic_scale_points[index - 1U];
+        const GMeasurementHarmonicScalePoint *right =
+            &calibration->harmonic_scale_points[index];
+
+        if (frequency_hz <= right->frequency_hz)
+        {
+            float ratio =
+                (frequency_hz - left->frequency_hz) /
+                (right->frequency_hz - left->frequency_hz);
+
+            return left->measured_scale +
+                   ratio * (right->measured_scale -
+                            left->measured_scale);
+        }
+    }
+
+    return calibration->harmonic_scale_points[
+        calibration->harmonic_scale_point_count - 1U].measured_scale;
 }
 
 static float GMeasurement_ConvertAmplitudeRow(

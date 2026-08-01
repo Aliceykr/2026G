@@ -61,6 +61,16 @@ typedef struct
         levels[G_MEASUREMENT_MAX_AMPLITUDE_LEVELS];
 } GMeasurementAmplitudeCalibrationRow;
 
+/*
+ * 多谐波联合拟合相对单正弦标定的额外幅值倍率。
+ * measured_scale = 多谐波测得峰值 / 信号源显示峰值。
+ */
+typedef struct
+{
+    float frequency_hz;
+    float measured_scale;
+} GMeasurementHarmonicScalePoint;
+
 typedef struct
 {
     const GMeasurementCalibrationPoint *points;
@@ -69,6 +79,8 @@ typedef struct
     uint8_t phase_point_count;
     const GMeasurementAmplitudeCalibrationRow *amplitude_rows;
     uint8_t amplitude_row_count;
+    const GMeasurementHarmonicScalePoint *harmonic_scale_points;
+    uint8_t harmonic_scale_point_count;
 } GMeasurementCalibration;
 
 typedef struct

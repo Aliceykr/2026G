@@ -58,6 +58,22 @@ static const GMeasurementCalibrationPoint s_CalibrationPoints[] =
  */
 #include "../../CalibrationData/rigol_phase_w0_001.inc"
 
+/*
+ * DG1022Z谐波模式、f0=50 kHz、相位全0度实测。
+ * H2~H8在50/70/100 mVpp以及不同伴随谐波下的倍率均值；
+ * 仅用于多分量测量中的Hn，H1和单正弦不应用。
+ */
+static const GMeasurementHarmonicScalePoint s_HarmonicScalePoints[] =
+{
+    { 100000.0f, 1.000343571f },
+    { 150000.0f, 1.018352143f },
+    { 200000.0f, 1.018006071f },
+    { 250000.0f, 1.019570000f },
+    { 300000.0f, 1.019727857f },
+    { 350000.0f, 1.020183571f },
+    { 400000.0f, 1.019995000f }
+};
+
 static const GMeasurementCalibration s_Calibration =
 {
     s_CalibrationPoints,
@@ -68,7 +84,10 @@ static const GMeasurementCalibration s_Calibration =
               sizeof(s_PhaseCalibrationPoints[0])),
     s_AmplitudeCalibrationRows,
     (uint8_t)(sizeof(s_AmplitudeCalibrationRows) /
-              sizeof(s_AmplitudeCalibrationRows[0]))
+              sizeof(s_AmplitudeCalibrationRows[0])),
+    s_HarmonicScalePoints,
+    (uint8_t)(sizeof(s_HarmonicScalePoints) /
+              sizeof(s_HarmonicScalePoints[0]))
 };
 
 const GMeasurementCalibration *GMeasurementCalibration_Get(void)
