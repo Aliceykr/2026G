@@ -129,7 +129,8 @@ uint8_t GMeasurement_Convert(const SpectrumResult *spectrum,
 /*
  * 内部复制已换算的各分量峰值，并按
  * round(amplitude_mv * 2) / 2量化为0.5mV后重新计算Vpp和Vrms。
- * 原生分量幅值保持不变，供串口屏与遥测继续显示原始小数值。
+ * 原生分量幅值保持不变；显示层可独立量化并增加显示随机数，
+ * 不得把显示值写回本结构参与Vpp/Vrms重建。
  */
 void GMeasurement_QuantizeHalfMv(GMeasurementResult *measurement);
 

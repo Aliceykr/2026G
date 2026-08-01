@@ -87,15 +87,21 @@ int main(void)
 
     TjcHmi_SetQuantizationEnabled(1U);
     TjcHmi_SetComputeBusy(1U);
-    if (strncmp(str1, "t6.txt=\"1", 9U) != 0)
+    if (strstr(str1, "\xB4\xF3" "1 ") == NULL)
     {
-        puts("FAIL TJC HMI quantization-on status prefix");
+        puts("FAIL TJC HMI large quantization-on status");
         return 1;
     }
     TjcHmi_SetQuantizationEnabled(0U);
-    if (strncmp(str1, "t6.txt=\"0", 9U) != 0)
+    if (strstr(str1, "\xB4\xF3" "0 ") == NULL)
     {
-        puts("FAIL TJC HMI quantization-off status prefix");
+        puts("FAIL TJC HMI large quantization-off status");
+        return 1;
+    }
+    TjcHmi_SetAlgorithmOptimized(0U);
+    if (strstr(str1, "\xD0\xA1" "0 ") == NULL)
+    {
+        puts("FAIL TJC HMI small quantization-off status");
         return 1;
     }
 

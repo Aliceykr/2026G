@@ -54,11 +54,18 @@ static const GMeasurementCalibrationPoint s_CalibrationPoints[] =
  */
 #include "../../CalibrationData/rigol_phase_w0_001.inc"
 
-/* 2958bf3“随机数”版本的原始五档幅度表和相位表。 */
+/*
+ * 2958bf3“随机数”版本、SIGLENT SDG1032X、50 ohm、相位0度实测：
+ * - 10~500 kHz，每10 kHz一个频点；
+ * - 每点50/100/150/200/250 mVpp五档；
+ * - 每档10帧，使用原始amplitude_codes中位数；
+ * - 只供随机数版本使用，不影响当前DG4162优化版。
+ */
 #define s_AmplitudeCalibrationRows s_LegacyAmplitudeCalibrationRows
-#include "../../CalibrationData/amplitude_full_2d.inc"
+#include "../../CalibrationData/sdg1032x_random_amplitude.inc"
 #undef s_AmplitudeCalibrationRows
 
+/* 2958bf3“随机数”版本的原始相位表。 */
 #define s_PhaseCalibrationPoints s_LegacyPhaseCalibrationPoints
 #include "../../CalibrationData/phase_w0_001.inc"
 #undef s_PhaseCalibrationPoints

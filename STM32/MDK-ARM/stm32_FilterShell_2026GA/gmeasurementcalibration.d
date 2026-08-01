@@ -4,5 +4,5 @@ stm32_filtershell_2026ga/gmeasurementcalibration.o: \
   ..\App\Inc\SpectrumAnalyzer.h \
   ..\App\Src\..\..\CalibrationData\dg4162_zero_phase_amplitude.inc \
   ..\App\Src\..\..\CalibrationData\rigol_phase_w0_001.inc \
-  ..\App\Src\..\..\CalibrationData\amplitude_full_2d.inc \
+  ..\App\Src\..\..\CalibrationData\sdg1032x_random_amplitude.inc \
   ..\App\Src\..\..\CalibrationData\phase_w0_001.inc

@@ -68,9 +68,9 @@
 #define TJC_TIME_LABEL_GB2312    "\xCA\xB1\xD3\xF2\xB2\xE2\xC1\xBF"
 #define TJC_TOGGLE_LABEL_GB2312  "\xC7\xD0\xBB\xBB\xD6\xDC\xC6\xDA"
 #define TJC_FREQUENCY_LABEL_GB2312 "\xC6\xB5\xD3\xF2\xB2\xE2\xC1\xBF"
-#define TJC_FUNCTION_LABEL_GB2312 "\xB9\xA6\xC4\xDC\xC7\xD0\xBB\xBB"
-#define TJC_OPTIMIZED_GB2312     "\xD3\xC5\xBB\xAF\xB0\xE6"
-#define TJC_LEGACY_GB2312        "\xCB\xE6\xBB\xFA\xCA\xFD\xB0\xE6"
+#define TJC_FUNCTION_LABEL_GB2312 "\xC1\xBF\xB3\xCC\xC7\xD0\xBB\xBB"
+#define TJC_LARGE_GB2312         "\xB4\xF3"
+#define TJC_SMALL_GB2312         "\xD0\xA1"
 #define TJC_COMPUTING_TEXT       "BUSY"
 #define TJC_READY_TEXT           "READY"
 #define TJC_STATUS_LABEL_GB2312  "\xD7\xB4\xCC\xAC"
@@ -96,7 +96,7 @@ static uint32_t s_NextStartLabelTick; /**< 下一次刷新静态文字的时刻�
 static volatile uint32_t s_RxErrorCount; /**< ORE/NE/FE/PE错误计数。 */
 static TjcHmiEvent s_PendingEvent; /**< get查询期间收到的按键事件。 */
 static uint8_t s_PendingCycles;    /**< 延迟事件携带的周期参数。 */
-static uint8_t s_QuantizationEnabled; /**< t6状态文字前的0/1量化标志。 */
+static uint8_t s_QuantizationEnabled; /**< 0.5mV量化状态，默认1、双击可切换。 */
 static uint8_t s_OptimizedAlgorithmEnabled; /**< 1当前优化版，0随机数版。 */
 static char s_LastStatusText[16]; /**< b3切换后用于立即重发当前状态。 */
 
@@ -324,12 +324,16 @@ static void TjcHmi_UpdateButtonText(void)
  */
 static uint8_t TjcHmi_DecodeFrame(TjcHmiEvent *event)
 {
-    if ((s_RxFrame[0] != 0x55U) ||
-        (s_RxFrame[2] != 0x00U) ||
-        (s_RxFrame[3] != 0x00U) ||
-        (s_RxFrame[4] != 0xFFU) ||
+    if ((s_RxFrame[4] != 0xFFU) ||
         (s_RxFrame[5] != 0xFFU) ||
         (s_RxFrame[6] != 0xFFU))
+    {
+        return 0U;
+    }
+
+    if ((s_RxFrame[0] != 0x55U) ||
+        (s_RxFrame[2] != 0x00U) ||
+        (s_RxFrame[3] != 0x00U))
     {
         return 0U;
     }
@@ -392,7 +396,7 @@ static uint8_t TjcHmi_ParseEventByte(uint8_t byte,
         return 0U;
     }
 
-    /* 有效按键帧不含0x55，中途看到帧头时立即重同步。 */
+    /* 中途看到帧头时立即重同步。 */
     if (byte == 0x55U)
     {
         s_RxFrame[0] = byte;
@@ -573,10 +577,10 @@ void TjcHmi_SetStatusText(const char *text)
         (void)snprintf(
             status_text,
             sizeof(status_text),
-            "%u%s " TJC_STATUS_LABEL_GB2312 "\xA3\xBA%s",
-            (unsigned int)s_QuantizationEnabled,
+            "%s%u " TJC_STATUS_LABEL_GB2312 "\xA3\xBA%s",
             (s_OptimizedAlgorithmEnabled != 0U)
-                ? TJC_OPTIMIZED_GB2312 : TJC_LEGACY_GB2312,
+                ? TJC_LARGE_GB2312 : TJC_SMALL_GB2312,
+            (unsigned int)s_QuantizationEnabled,
             display_text);
         tjc_send_txt("t6", "txt", status_text);
     }

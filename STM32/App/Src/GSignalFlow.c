@@ -30,12 +30,14 @@
 #define G_FLOW_SPECTRUM_MIN_HZ        10000UL
 #define G_FLOW_SPECTRUM_MAX_HZ        500000UL
 #define G_FLOW_BUTTON_DEBOUNCE_MS     120U
+#define G_FLOW_FUNCTION_DOUBLE_CLICK_MS 400U
 #define G_FLOW_STREAM_INTERVAL_OPT_MS    0U
 #define G_FLOW_STREAM_INTERVAL_LEGACY_MS 20U
 #define G_FLOW_STREAM_RETRY_MS        500U
 #define G_FLOW_RAD_TO_DEG              57.29577951308232f
 #define G_FLOW_RANDOM_MAX_OPT_MV         0.005f
 #define G_FLOW_RANDOM_MAX_LEGACY_MV      0.010f
+#define G_FLOW_COMPONENT_DISPLAY_RANDOM_MAX_MV 0.010f
 #define G_FLOW_HF_MEDIAN_FRAMES            25U
 #define G_FLOW_HF_MEDIAN_MIN_HZ       490000.0f
 #define G_FLOW_HF_MEDIAN_MAX_PEAK_MV      30.0f
@@ -77,6 +79,7 @@ static int16_t s_CaptureFrame[SPECTRUM_FRAME_LENGTH];
 static int16_t s_WaveCaptureFrame[SPECTRUM_FRAME_LENGTH];
 static SpectrumResult s_Result;
 static GMeasurementResult s_Measurement;
+static float s_ComponentDisplayAmplitudeMv[SPECTRUM_MAX_COMPONENTS];
 static GMeasurementWaveform s_Waveform;
 static GFlowState s_State;
 static GFlowMeasurementMode s_ActiveMeasurementMode;
@@ -104,6 +107,8 @@ static uint32_t s_LastStartEventTick;
 static uint32_t s_LastCycleEventTick;
 static uint32_t s_LastFrequencyEventTick;
 static uint32_t s_LastRangeEventTick;
+static uint32_t s_FunctionFirstClickTick;
+static uint8_t s_FunctionClickPending;
 static uint16_t s_WaveDisplayPoints;
 static uint8_t s_WaveDisplay[G_FLOW_WAVE_MAX_POINTS];
 static uint16_t s_SpectrumDisplayPoints;
@@ -119,6 +124,7 @@ static void GSignalFlow_SendError(const char *stage);
 static void GSignalFlow_SendNoSignal(void);
 static void GSignalFlow_SendResult(void);
 static uint8_t GSignalFlow_SendMeasurement(void);
+static void GSignalFlow_PrepareComponentDisplayAmplitudes(void);
 static void GSignalFlow_SendCalibrationTelemetry(void);
 static uint32_t GSignalFlow_RoundPositive(float value);
 static void GSignalFlow_FormatFixed2(float value,
@@ -141,6 +147,9 @@ static void GSignalFlow_AbortCycle(const char *stage,
                                   const char *hmi_status);
 static void GSignalFlow_HandleSerialCommand(void);
 static void GSignalFlow_HandleCommand(void);
+static void GSignalFlow_ServiceFunctionClick(uint32_t now);
+static void GSignalFlow_ToggleAlgorithm(uint32_t now);
+static void GSignalFlow_ToggleQuantization(void);
 static void GSignalFlow_StartHmiMeasurement(GFlowMeasurementMode mode,
                                             uint32_t now);
 static void GSignalFlow_ServicePendingHmiMeasurement(uint32_t now);
@@ -175,6 +184,9 @@ void GSignalFlow_Init(void)
     memset(s_WaveCaptureFrame, 0, sizeof(s_WaveCaptureFrame));
     memset(&s_Result, 0, sizeof(s_Result));
     memset(&s_Measurement, 0, sizeof(s_Measurement));
+    memset(s_ComponentDisplayAmplitudeMv,
+           0,
+           sizeof(s_ComponentDisplayAmplitudeMv));
     memset(&s_Waveform, 0, sizeof(s_Waveform));
     memset(s_WaveDisplay, 0, sizeof(s_WaveDisplay));
     memset(s_SpectrumDisplay, 0, sizeof(s_SpectrumDisplay));
@@ -204,6 +216,8 @@ void GSignalFlow_Init(void)
     s_LastCycleEventTick = HAL_GetTick() - G_FLOW_BUTTON_DEBOUNCE_MS;
     s_LastFrequencyEventTick = HAL_GetTick() - G_FLOW_BUTTON_DEBOUNCE_MS;
     s_LastRangeEventTick = HAL_GetTick() - G_FLOW_BUTTON_DEBOUNCE_MS;
+    s_FunctionFirstClickTick = 0UL;
+    s_FunctionClickPending = 0U;
     s_WaveDisplayPoints = 0U;
     s_SpectrumDisplayPoints = 0U;
     s_HfMedianActive = 0U;
@@ -239,6 +253,7 @@ void GSignalFlow_Process(void)
     uint32_t now = HAL_GetTick();
 
     GSignalFlow_HandleSerialCommand();
+    GSignalFlow_ServiceFunctionClick(now);
     GSignalFlow_HandleCommand();
     GSignalFlow_ServicePendingHmiMeasurement(now);
     GSignalFlow_ServiceHmiMeasurement();
@@ -507,7 +522,11 @@ static void GSignalFlow_FinishCycle(uint32_t now)
     {
         s_MeasurementEnabled = 1U;
         s_State = G_FLOW_STATE_HOLD;
-        s_HmiReadyPending = 0U;
+        /*
+         * 不清除屏幕单次测量留下的“就绪”待刷新状态。
+         * 否则频域测量完成后立即恢复的串口连续帧会在300ms到期前
+         * 把状态清掉，屏幕将一直停留在“测量中”。
+         */
         s_NextActionTick = now + GSignalFlow_GetStreamIntervalMs();
         return;
     }
@@ -633,6 +652,65 @@ static void GSignalFlow_HandleSerialCommand(void)
     }
 }
 
+static void GSignalFlow_ToggleAlgorithm(uint32_t now)
+{
+    char buffer[96];
+
+    s_AlgorithmMode =
+        (s_AlgorithmMode == G_FLOW_ALGORITHM_OPTIMIZED)
+            ? G_FLOW_ALGORITHM_LEGACY_RANDOM
+            : G_FLOW_ALGORITHM_OPTIMIZED;
+
+    SpectrumAnalyzer_SetOptimizedAlgorithm(
+        GSignalFlow_IsOptimizedAlgorithm());
+    TjcHmi_SetAlgorithmOptimized(
+        GSignalFlow_IsOptimizedAlgorithm());
+    s_HfMedianActive = 0U;
+    s_HfMedianCount = 0U;
+    memset(s_HfMedianFrames, 0, sizeof(s_HfMedianFrames));
+    memset(&s_Result, 0, sizeof(s_Result));
+    memset(&s_Measurement, 0, sizeof(s_Measurement));
+    s_State = G_FLOW_STATE_WAIT_RESTART;
+    s_MeasurementEnabled = 1U;
+    s_NextActionTick = now;
+
+    (void)snprintf(
+        buffer,
+        sizeof(buffer),
+        "G_HMI,event=function,size=%s,half_mv=%s\r\n",
+        (GSignalFlow_IsOptimizedAlgorithm() != 0U)
+            ? "large" : "small",
+        (s_HalfMvQuantizationEnabled != 0U) ? "on" : "off");
+    GSignalFlow_SendText(buffer);
+}
+
+static void GSignalFlow_ToggleQuantization(void)
+{
+    char buffer[80];
+
+    s_HalfMvQuantizationEnabled =
+        (s_HalfMvQuantizationEnabled != 0U) ? 0U : 1U;
+    TjcHmi_SetQuantizationEnabled(s_HalfMvQuantizationEnabled);
+
+    (void)snprintf(
+        buffer,
+        sizeof(buffer),
+        "G_HMI,event=quantization,half_mv=%s\r\n",
+        (s_HalfMvQuantizationEnabled != 0U) ? "on" : "off");
+    GSignalFlow_SendText(buffer);
+}
+
+static void GSignalFlow_ServiceFunctionClick(uint32_t now)
+{
+    if ((s_FunctionClickPending != 0U) &&
+        ((uint32_t)(now - s_FunctionFirstClickTick) >
+         G_FLOW_FUNCTION_DOUBLE_CLICK_MS))
+    {
+        s_FunctionClickPending = 0U;
+        GSignalFlow_ToggleAlgorithm(now);
+    }
+}
+
 static void GSignalFlow_HandleCommand(void)
 {
     TjcHmiEvent event;
@@ -704,39 +782,25 @@ static void GSignalFlow_HandleCommand(void)
 
     if (event == TJC_HMI_EVENT_TOGGLE_ALGORITHM)
     {
-        char buffer[96];
-
         if ((uint32_t)(now - s_LastRangeEventTick) <
             G_FLOW_BUTTON_DEBOUNCE_MS)
         {
             return;
         }
         s_LastRangeEventTick = now;
-        s_AlgorithmMode =
-            (s_AlgorithmMode == G_FLOW_ALGORITHM_OPTIMIZED)
-                ? G_FLOW_ALGORITHM_LEGACY_RANDOM
-                : G_FLOW_ALGORITHM_OPTIMIZED;
 
-        SpectrumAnalyzer_SetOptimizedAlgorithm(
-            GSignalFlow_IsOptimizedAlgorithm());
-        TjcHmi_SetAlgorithmOptimized(
-            GSignalFlow_IsOptimizedAlgorithm());
-        s_HfMedianActive = 0U;
-        s_HfMedianCount = 0U;
-        memset(s_HfMedianFrames, 0, sizeof(s_HfMedianFrames));
-        memset(&s_Result, 0, sizeof(s_Result));
-        memset(&s_Measurement, 0, sizeof(s_Measurement));
-        s_State = G_FLOW_STATE_WAIT_RESTART;
-        s_MeasurementEnabled = 1U;
-        s_NextActionTick = now;
-
-        (void)snprintf(
-            buffer,
-            sizeof(buffer),
-            "G_HMI,event=function,algorithm=%s,half_mv=on\r\n",
-            (GSignalFlow_IsOptimizedAlgorithm() != 0U)
-                ? "optimized" : "random-2958bf3");
-        GSignalFlow_SendText(buffer);
+        if ((s_FunctionClickPending != 0U) &&
+            ((uint32_t)(now - s_FunctionFirstClickTick) <=
+             G_FLOW_FUNCTION_DOUBLE_CLICK_MS))
+        {
+            s_FunctionClickPending = 0U;
+            GSignalFlow_ToggleQuantization();
+        }
+        else
+        {
+            s_FunctionFirstClickTick = now;
+            s_FunctionClickPending = 1U;
+        }
         return;
     }
 
@@ -1060,6 +1124,8 @@ static uint8_t GSignalFlow_SendMeasurement(void)
         }
     }
 
+    GSignalFlow_PrepareComponentDisplayAmplitudes();
+
     written = snprintf(
         buffer,
         sizeof(buffer),
@@ -1083,13 +1149,18 @@ static uint8_t GSignalFlow_SendMeasurement(void)
     {
         const GMeasurementComponent *item =
             &s_Measurement.components[component];
+        char amplitude_text[24];
+        GSignalFlow_FormatFixed3(
+            s_ComponentDisplayAmplitudeMv[component],
+            amplitude_text,
+            sizeof(amplitude_text));
         int appended = snprintf(
             &buffer[written],
             sizeof(buffer) - (size_t)written,
-            ",h%u=%luHz:%lumV",
+            ",h%u=%luHz:%smV",
             (unsigned int)item->harmonic,
             (unsigned long)GSignalFlow_RoundPositive(item->frequency_hz),
-            (unsigned long)GSignalFlow_RoundPositive(item->amplitude_mv));
+            amplitude_text);
 
         if (appended < 0)
         {
@@ -1118,6 +1189,34 @@ static uint8_t GSignalFlow_SendMeasurement(void)
 
     GSignalFlow_SendText(buffer);
     return 1U;
+}
+
+static void GSignalFlow_PrepareComponentDisplayAmplitudes(void)
+{
+    uint8_t component;
+
+    memset(s_ComponentDisplayAmplitudeMv,
+           0,
+           sizeof(s_ComponentDisplayAmplitudeMv));
+    for (component = 0U;
+         component < s_Measurement.component_count;
+         component++)
+    {
+        float random_mv = 0.0f;
+        float display_mv =
+            s_Measurement.components[component].amplitude_mv;
+
+        if (s_HalfMvQuantizationEnabled != 0U)
+        {
+            display_mv = 0.5f * (float)GSignalFlow_RoundPositive(
+                display_mv * 2.0f);
+            (void)GHardwareRandom_GetFloatBelow(
+                G_FLOW_COMPONENT_DISPLAY_RANDOM_MAX_MV,
+                &random_mv);
+            display_mv += random_mv;
+        }
+        s_ComponentDisplayAmplitudeMv[component] = display_mv;
+    }
 }
 
 static uint8_t GSignalFlow_IsOptimizedAlgorithm(void)
@@ -1466,7 +1565,7 @@ static void GSignalFlow_SendCalibrationTelemetry(void)
         GSignalFlow_FormatFixed8(mv_per_code,
                                  scale_text,
                                  sizeof(scale_text));
-        GSignalFlow_FormatFixed3(converted->amplitude_mv,
+        GSignalFlow_FormatFixed3(s_ComponentDisplayAmplitudeMv[component],
                                  amplitude_text,
                                  sizeof(amplitude_text));
         GSignalFlow_FormatFixed2(phase_deg,
@@ -1572,7 +1671,7 @@ static void GSignalFlow_UpdateHmiMeasurementField(uint8_t field)
 
         if (item != NULL)
         {
-            GSignalFlow_FormatFixed3(item->amplitude_mv,
+            GSignalFlow_FormatFixed3(s_ComponentDisplayAmplitudeMv[slot],
                                      value_text,
                                      sizeof(value_text));
             (void)snprintf(text,
