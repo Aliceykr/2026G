@@ -1,6 +1,0 @@
-v1
-DSP_BALANCING_IMPLEMENTATION,DSP_BLOCKS,g_sos3_lowpass:lowpass_inst|lpm_mult:Mult2|mult_c6t:auto_generated|mac_out2,
-DSP_BALANCING_IMPLEMENTATION,DSP_BLOCKS,g_sos3_lowpass:lowpass_inst|lpm_mult:Mult4|mult_a6t:auto_generated|mac_out2,
-DSP_BALANCING_IMPLEMENTATION,DSP_BLOCKS,g_sos3_lowpass:lowpass_inst|lpm_mult:Mult1|mult_c6t:auto_generated|mac_out2,
-DSP_BALANCING_IMPLEMENTATION,DSP_BLOCKS,g_sos3_lowpass:lowpass_inst|lpm_mult:Mult3|mult_c6t:auto_generated|mac_out2,
-DSP_BALANCING_IMPLEMENTATION,DSP_BLOCKS,g_sos3_lowpass:lowpass_inst|lpm_mult:Mult0|mult_c6t:auto_generated|mac_out2,
